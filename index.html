@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gift Tracker - ポップで楽しいプレゼント記録！</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;700;800&family=Fredoka+One&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="app-container">
+        <header>
+            <h1 class="logo"><i class="fa-solid fa-face-smile-wink"></i> Gift Tracker</h1>
+            <p>プレゼントの思い出を楽しく残そう！</p>
+        </header>
+
+        <main>
+            <div class="tabs">
+                <button class="tab-btn active" data-type="given"><i class="fa-solid fa-hand-holding-heart"></i> あげたもの</button>
+                <button class="tab-btn" data-type="received"><i class="fa-solid fa-box-open"></i> もらったもの</button>
+            </div>
+
+            <!-- Step-by-step Form Card -->
+            <div class="card wizard-card">
+                <div class="progress-bar-container">
+                    <div class="progress-bar" id="progress-bar"></div>
+                </div>
+                
+                <form id="gift-form">
+                    <!-- Step 1: Name -->
+                    <div class="step active" data-step="1">
+                        <div class="step-icon"><i class="fa-solid fa-user-astronaut"></i></div>
+                        <h2>だれに？</h2>
+                        <p class="step-desc" id="step1-desc">だれへのプレゼント？</p>
+                        <input type="text" id="friend-name" placeholder="お名前を入力してね" autocomplete="off">
+                        <button type="button" class="btn next-btn" onclick="nextStep()">つぎへ！ <i class="fa-solid fa-chevron-right"></i></button>
+                    </div>
+
+                    <!-- Step 2: Item -->
+                    <div class="step" data-step="2">
+                        <div class="step-icon"><i class="fa-solid fa-gift"></i></div>
+                        <h2>なにを？</h2>
+                        <p class="step-desc">どんなものをプレゼントした？</p>
+                        <input type="text" id="gift-item" placeholder="プレゼントの内容" autocomplete="off">
+                        <div class="btn-row">
+                            <button type="button" class="btn btn-secondary prev-btn" onclick="prevStep()"><i class="fa-solid fa-chevron-left"></i> もどる</button>
+                            <button type="button" class="btn next-btn" onclick="nextStep()">つぎへ！ <i class="fa-solid fa-chevron-right"></i></button>
+                        </div>
+                    </div>
+
+                    <!-- Step 3: Price -->
+                    <div class="step" data-step="3">
+                        <div class="step-icon"><i class="fa-solid fa-coins"></i></div>
+                        <h2>いくら？</h2>
+                        <p class="step-desc">だいたいの金額をおしえて！</p>
+                        <div class="price-input-wrapper">
+                            <span class="currency">¥</span>
+                            <input type="number" id="gift-price" placeholder="0" autocomplete="off">
+                        </div>
+                        <div class="btn-row">
+                            <button type="button" class="btn btn-secondary prev-btn" onclick="prevStep()"><i class="fa-solid fa-chevron-left"></i> もどる</button>
+                            <button type="button" class="btn next-btn" onclick="nextStep()">つぎへ！ <i class="fa-solid fa-chevron-right"></i></button>
+                        </div>
+                    </div>
+
+                    <!-- Step 4: Date & Submit -->
+                    <div class="step" data-step="4">
+                        <div class="step-icon"><i class="fa-solid fa-calendar-check"></i></div>
+                        <h2>いつ？</h2>
+                        <p class="step-desc">プレゼントした日</p>
+                        <input type="date" id="gift-date">
+                        
+                        <div class="summary-preview" id="summary-preview">
+                            <!-- JS will inject preview here -->
+                        </div>
+
+                        <div class="btn-row">
+                            <button type="button" class="btn btn-secondary prev-btn" onclick="prevStep()"><i class="fa-solid fa-chevron-left"></i> もどる</button>
+                            <button type="submit" class="btn btn-primary submit-btn"><i class="fa-solid fa-star"></i> きろくする！</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <div class="card history-card">
+                <div class="history-header">
+                    <h2><i class="fa-solid fa-book"></i> おもいでリスト</h2>
+                    <div class="summary-badge" id="total-amount">ごうけい: ¥0</div>
+                </div>
+                <div class="history-list" id="history-list">
+                    <!-- Records -->
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
