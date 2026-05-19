@@ -43,11 +43,17 @@ ${ideaList}
 利用するアイデアID: ${ideas.map(i => `"${i.id}"`).join(", ")}
 クラスター数は2〜6個、色は鮮明で区別しやすいHEXカラーを使用してください。`;
 
-  const message = await client.messages.create({
-    model: "claude-opus-4-7",
-    max_tokens: 4096,
-    messages: [{ role: "user", content: prompt }],
-  });
+  let message;
+  try {
+    message = await client.messages.create({
+      model: "claude-opus-4-7",
+      max_tokens: 4096,
+      messages: [{ role: "user", content: prompt }],
+    });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ error: `Claude APIエラー: ${msg}` }, { status: 500 });
+  }
 
   const raw = message.content[0].type === "text" ? message.content[0].text : "";
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
@@ -55,6 +61,10 @@ ${ideaList}
     return NextResponse.json({ error: "AIの応答を解析できませんでした" }, { status: 500 });
   }
 
-  const data = JSON.parse(jsonMatch[0]);
-  return NextResponse.json(data);
+  try {
+    const data = JSON.parse(jsonMatch[0]);
+    return NextResponse.json(data);
+  } catch {
+    return NextResponse.json({ error: "JSONの解析に失敗しました" }, { status: 500 });
+  }
 }
