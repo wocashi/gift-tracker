@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --border: #2a2d3a;
+  --text: #e8eaf0;
+  --text-muted: #6b7280;
+  --accent: #6366f1;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.map-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(26, 29, 39, 0.95);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  max-width: 220px;
+  line-height: 1.5;
+  z-index: 100;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+
+.idea-dot {
+  cursor: pointer;
+  transition: r 0.15s;
+}
+
+.idea-dot:hover {
+  filter: brightness(1.3);
+}
