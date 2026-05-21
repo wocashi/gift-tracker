@@ -42,6 +42,7 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [urlInput, setUrlInput] = useState("");
   const [urlFetching, setUrlFetching] = useState(false);
+  const [urlSummarizing, setUrlSummarizing] = useState(false);
   const [mapData, setMapData] = useState<MapData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -50,6 +51,8 @@ export default function Home() {
   const [confirmClear, setConfirmClear] = useState(false);
   const [editingClusterId, setEditingClusterId] = useState<string | null>(null);
   const [editingClusterLabel, setEditingClusterLabel] = useState("");
+  const [isMobile, setIsMobile] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -57,11 +60,17 @@ export default function Home() {
     if (saved) setIdeas(JSON.parse(saved));
   }, []);
 
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
+
   // URLが貼られたら自動でタイトル取得
   useEffect(() => {
     const trimmed = urlInput.trim();
     if (!trimmed.match(/^https?:\/\/.+/)) return;
-
     const timer = setTimeout(async () => {
       setUrlFetching(true);
       try {
@@ -70,17 +79,38 @@ export default function Home() {
         if (data.title && data.title !== trimmed) {
           setInput(prev => prev || data.title);
         }
-      } catch { /* 無視 */ } finally {
+      } catch { /* ignore */ } finally {
         setUrlFetching(false);
       }
     }, 600);
-
     return () => clearTimeout(timer);
   }, [urlInput]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(ideas));
   }, [ideas]);
+
+  // URLの内容をClaudeで要約してアイデアとして追加
+  async function summarizeAndAdd() {
+    const url = urlInput.trim();
+    if (!url.match(/^https?:\/\/.+/)) return;
+    setUrlSummarizing(true);
+    try {
+      const res = await fetch("/api/summarize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const data = await res.json();
+      if (data.summary) {
+        setIdeas(prev => [...prev, { id: generateId(), text: data.summary, url }]);
+        setUrlInput("");
+        setInput("");
+      }
+    } catch { /* ignore */ } finally {
+      setUrlSummarizing(false);
+    }
+  }
 
   function addIdea() {
     const text = input.trim();
@@ -115,6 +145,7 @@ export default function Home() {
     setError("");
     setSelectedCluster(null);
     setDetailIdea(null);
+    if (isMobile) setSidebarOpen(false);
     try {
       const res = await fetch("/api/analyze", {
         method: "POST",
@@ -180,225 +211,248 @@ export default function Home() {
   const clusterForDisplay = mapData?.clusters ?? [];
   const ideaCount = ideas.length;
 
-  return (
-    <div className="flex h-screen overflow-hidden" style={{ background: "var(--bg)" }}>
-      {/* サイドバー */}
-      <aside
-        className="flex flex-col gap-4 p-5 overflow-y-auto flex-shrink-0"
-        style={{
-          width: 300,
-          borderRight: "2px solid var(--border)",
-          background: "var(--surface)",
-          boxShadow: "4px 0 24px rgba(124,58,237,0.06)",
-        }}
-      >
-        <div className="flex items-center gap-2 pb-3" style={{ borderBottom: "2px solid var(--border)" }}>
-          <span style={{ fontSize: 26 }}>🧠</span>
-          <div>
-            <div className="font-black text-xl tracking-tight" style={{ color: "var(--text)" }}>IdeaMap</div>
-            <div className="text-xs" style={{ color: "var(--text-muted)" }}>思考を地図にする</div>
-          </div>
+  // ── サイドバー共通コンテンツ ──────────────────────────────
+  const sidebarContent = (
+    <>
+      <div className="flex items-center gap-2 pb-3" style={{ borderBottom: "2px solid var(--border)" }}>
+        <span style={{ fontSize: 24 }}>🧠</span>
+        <div>
+          <div className="font-black text-lg tracking-tight" style={{ color: "var(--text)" }}>IdeaMap</div>
+          <div className="text-xs" style={{ color: "var(--text-muted)" }}>思考を地図にする</div>
         </div>
-
-        <div className="flex flex-col gap-2">
-          <label className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--accent)" }}>
-            💡 アイデアを追加
-          </label>
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="アイデアを入力… (Enterで追加)"
-            rows={3}
-            className="w-full resize-none rounded-xl p-3 text-sm outline-none"
-            style={{
-              background: "#faf9ff",
-              border: "2px solid var(--border)",
-              color: "var(--text)",
-              lineHeight: 1.6,
-              transition: "border-color 0.15s",
-            }}
-            onFocus={e => (e.target.style.borderColor = "#c4b3f8")}
-            onBlur={e => (e.target.style.borderColor = "var(--border)")}
-          />
-          <div className="flex items-center gap-2 rounded-xl px-3 py-2" style={{ background: "#faf9ff", border: "2px solid var(--border)" }}>
-            <span style={{ fontSize: 14 }}>🔗</span>
-            <input
-              type="url"
-              value={urlInput}
-              onChange={e => setUrlInput(e.target.value)}
-              placeholder="URL（任意）"
-              className="flex-1 text-sm outline-none"
-              style={{ background: "transparent", color: "var(--text)" }}
-            />
-            {urlFetching && <span className="text-xs animate-spin">⏳</span>}
-            {urlInput && !urlFetching && (
-              <button onClick={() => setUrlInput("")} className="text-xs" style={{ color: "var(--text-muted)" }}>✕</button>
-            )}
-          </div>
+        {isMobile && (
           <button
-            onClick={addIdea}
-            disabled={!input.trim()}
-            className="rounded-xl py-2 px-4 text-sm font-bold transition-all btn-primary"
+            onClick={() => setSidebarOpen(false)}
+            className="ml-auto rounded-full w-8 h-8 flex items-center justify-center text-lg"
+            style={{ background: "var(--border)", color: "var(--text-muted)" }}
           >
-            ＋ 追加
+            ✕
           </button>
+        )}
+      </div>
+
+      {/* アイデア入力 */}
+      <div className="flex flex-col gap-2">
+        <label className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--accent)" }}>
+          💡 アイデアを追加
+        </label>
+        <textarea
+          ref={inputRef}
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="アイデアを入力… (Enterで追加)"
+          rows={3}
+          className="w-full resize-none rounded-xl p-3 text-sm outline-none"
+          style={{
+            background: "#faf9ff",
+            border: "2px solid var(--border)",
+            color: "var(--text)",
+            lineHeight: 1.6,
+            transition: "border-color 0.15s",
+          }}
+          onFocus={e => (e.target.style.borderColor = "#c4b3f8")}
+          onBlur={e => (e.target.style.borderColor = "var(--border)")}
+        />
+        {/* URL入力 */}
+        <div className="flex items-center gap-2 rounded-xl px-3 py-2" style={{ background: "#faf9ff", border: "2px solid var(--border)" }}>
+          <span style={{ fontSize: 13 }}>🔗</span>
+          <input
+            type="url"
+            value={urlInput}
+            onChange={e => setUrlInput(e.target.value)}
+            placeholder="URL（任意）"
+            className="flex-1 text-sm outline-none"
+            style={{ background: "transparent", color: "var(--text)" }}
+          />
+          {urlFetching && <span className="text-xs opacity-50">⏳</span>}
+          {urlInput && !urlFetching && (
+            <button onClick={() => setUrlInput("")} className="text-xs" style={{ color: "var(--text-muted)" }}>✕</button>
+          )}
         </div>
 
-        {ideas.length > 0 && (
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--accent)" }}>
-                📌 アイデア一覧 ({ideaCount})
-              </label>
-              {confirmClear ? (
-                <div className="flex items-center gap-1">
-                  <span className="text-xs" style={{ color: "var(--text-muted)" }}>本当に？</span>
-                  <button
-                    onClick={clearAll}
-                    className="text-xs rounded-md px-2 py-0.5 font-bold"
-                    style={{ color: "white", background: "#e11d48" }}
-                  >
-                    削除
-                  </button>
-                  <button
-                    onClick={() => setConfirmClear(false)}
-                    className="text-xs rounded-md px-2 py-0.5"
-                    style={{ color: "var(--text-muted)", background: "#f0ecff" }}
-                  >
-                    戻る
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setConfirmClear(true)}
-                  className="text-xs rounded-md px-2 py-0.5 transition-colors"
-                  style={{ color: "var(--text-muted)", background: "#f0ecff" }}
-                >
-                  全削除
-                </button>
-              )}
-            </div>
-            <div className="flex flex-col gap-1.5 max-h-56 overflow-y-auto pr-0.5">
-              {ideas.map((idea, i) => (
-                <div key={idea.id} className="idea-card flex items-start gap-2 group">
-                  <span
-                    className="flex-shrink-0 rounded-full text-xs font-bold flex items-center justify-center mt-0.5"
-                    style={{ width: 18, height: 18, background: "#ede9fe", color: "var(--accent)", fontSize: 10 }}
-                  >
-                    {i + 1}
-                  </span>
-                  <span className="flex-1 text-sm leading-snug" style={{ color: "var(--text)" }}>
-                    {idea.text}
-                    {idea.memo && <span className="ml-1 text-xs" style={{ color: "var(--text-muted)" }}>📝</span>}
-                    {idea.image && <span className="ml-1 text-xs">🖼️</span>}
-                  </span>
-                  {idea.url && (
-                    <a
-                      href={idea.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={e => e.stopPropagation()}
-                      className="flex-shrink-0 opacity-50 hover:opacity-100 transition-opacity"
-                      title={idea.url}
-                    >
-                      🔗
-                    </a>
-                  )}
-                  <button
-                    onClick={() => removeIdea(idea.id)}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity text-xs flex-shrink-0 mt-0.5"
-                    style={{ color: "var(--text-muted)" }}
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
+        {/* URL要約ボタン */}
+        {urlInput.match(/^https?:\/\/.+/) && (
+          <button
+            onClick={summarizeAndAdd}
+            disabled={urlSummarizing}
+            className="rounded-xl py-2 px-3 text-xs font-bold transition-all"
+            style={{
+              background: urlSummarizing ? "#e4e0f5" : "#ede9fe",
+              color: "var(--accent)",
+              border: "1.5px solid #c4b3f8",
+            }}
+          >
+            {urlSummarizing ? "⏳ 要約中…" : "📰 URLの内容を要約して追加"}
+          </button>
         )}
 
         <button
-          onClick={generateMap}
-          disabled={loading || ideaCount < 2}
-          className="rounded-2xl py-3.5 px-4 text-sm font-black transition-all mt-auto btn-primary"
-          style={{ letterSpacing: "0.02em", fontSize: 15 }}
+          onClick={addIdea}
+          disabled={!input.trim()}
+          className="rounded-xl py-2 px-4 text-sm font-bold transition-all btn-primary"
         >
-          {loading ? "🌀 マップ生成中…" : "✨ マップを生成する"}
+          ＋ 追加
         </button>
+      </div>
 
-        {ideaCount === 1 && (
-          <p className="text-xs text-center" style={{ color: "var(--text-muted)", marginTop: -8 }}>
-            あと1件追加すると生成できます
-          </p>
-        )}
-
-        {error && (
-          <div className="text-xs rounded-xl p-3" style={{ background: "#fff0f3", color: "#e11d48", border: "1.5px solid #fecdd3" }}>
-            {error}
-          </div>
-        )}
-
-        {clusterForDisplay.length > 0 && (
-          <div className="flex flex-col gap-2" style={{ borderTop: "2px solid var(--border)", paddingTop: 14 }}>
+      {/* アイデア一覧 */}
+      {ideas.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center justify-between">
             <label className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--accent)" }}>
-              🎨 クラスター
+              📌 アイデア一覧 ({ideaCount})
             </label>
-            {clusterForDisplay.map(cluster => (
-              <div
-                key={cluster.id}
-                className="rounded-xl p-2.5 transition-all"
-                style={{
-                  background: selectedCluster?.id === cluster.id ? cluster.color + "15" : "#faf9ff",
-                  border: `2px solid ${selectedCluster?.id === cluster.id ? cluster.color : "var(--border)"}`,
-                }}
-              >
-                <div className="flex items-center gap-2">
-                  <span
-                    className="rounded-full flex-shrink-0"
-                    style={{ width: 11, height: 11, background: cluster.color, boxShadow: `0 0 0 3px ${cluster.color}30` }}
-                  />
-                  {editingClusterId === cluster.id ? (
-                    <input
-                      autoFocus
-                      value={editingClusterLabel}
-                      onChange={e => setEditingClusterLabel(e.target.value)}
-                      onBlur={saveClusterLabel}
-                      onKeyDown={e => { if (e.key === "Enter") saveClusterLabel(); if (e.key === "Escape") setEditingClusterId(null); }}
-                      className="flex-1 text-sm font-bold rounded-md px-1 outline-none"
-                      style={{ border: `1.5px solid ${cluster.color}`, color: "var(--text)", background: "white" }}
-                    />
-                  ) : (
-                    <button
-                      className="flex-1 text-left text-sm font-bold"
-                      style={{ color: "var(--text)" }}
-                      onClick={() => setSelectedCluster(prev => prev?.id === cluster.id ? null : cluster)}
-                    >
-                      {cluster.label}
-                    </button>
-                  )}
-                  <button
-                    onClick={() => startEditCluster(cluster)}
-                    className="text-xs opacity-40 hover:opacity-100 transition-opacity flex-shrink-0"
-                    title="名前を編集"
-                  >
-                    ✏️
-                  </button>
-                </div>
-                {selectedCluster?.id === cluster.id && editingClusterId !== cluster.id && (
-                  <p className="text-xs mt-1.5 leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                    {cluster.summary}
-                  </p>
+            {confirmClear ? (
+              <div className="flex items-center gap-1">
+                <span className="text-xs" style={{ color: "var(--text-muted)" }}>本当に？</span>
+                <button onClick={clearAll} className="text-xs rounded-md px-2 py-0.5 font-bold" style={{ color: "white", background: "#e11d48" }}>削除</button>
+                <button onClick={() => setConfirmClear(false)} className="text-xs rounded-md px-2 py-0.5" style={{ color: "var(--text-muted)", background: "#f0ecff" }}>戻る</button>
+              </div>
+            ) : (
+              <button onClick={() => setConfirmClear(true)} className="text-xs rounded-md px-2 py-0.5" style={{ color: "var(--text-muted)", background: "#f0ecff" }}>全削除</button>
+            )}
+          </div>
+          <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto">
+            {ideas.map((idea, i) => (
+              <div key={idea.id} className="idea-card flex items-start gap-2 group">
+                <span className="flex-shrink-0 rounded-full text-xs font-bold flex items-center justify-center mt-0.5" style={{ width: 18, height: 18, background: "#ede9fe", color: "var(--accent)", fontSize: 10 }}>
+                  {i + 1}
+                </span>
+                <span className="flex-1 text-sm leading-snug" style={{ color: "var(--text)" }}>
+                  {idea.text}
+                  {idea.memo && <span className="ml-1 text-xs" style={{ color: "var(--text-muted)" }}>📝</span>}
+                  {idea.image && <span className="ml-1 text-xs">🖼️</span>}
+                </span>
+                {idea.url && (
+                  <a href={idea.url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="flex-shrink-0 opacity-40 hover:opacity-100 transition-opacity text-sm" title={idea.url}>🔗</a>
                 )}
+                <button onClick={() => removeIdea(idea.id)} className="opacity-0 group-hover:opacity-100 transition-opacity text-xs flex-shrink-0 mt-0.5" style={{ color: "var(--text-muted)" }}>✕</button>
               </div>
             ))}
           </div>
-        )}
-      </aside>
+        </div>
+      )}
 
-      {/* マップエリア */}
-      <main className="flex-1 relative overflow-hidden map-bg">
+      {/* 生成ボタン */}
+      <button
+        onClick={generateMap}
+        disabled={loading || ideaCount < 2}
+        className="rounded-2xl py-3.5 px-4 text-sm font-black transition-all btn-primary"
+        style={{ letterSpacing: "0.02em", fontSize: 15 }}
+      >
+        {loading ? "🌀 マップ生成中…" : "✨ マップを生成する"}
+      </button>
+
+      {ideaCount === 1 && (
+        <p className="text-xs text-center" style={{ color: "var(--text-muted)", marginTop: -8 }}>
+          あと1件追加すると生成できます
+        </p>
+      )}
+
+      {error && (
+        <div className="text-xs rounded-xl p-3" style={{ background: "#fff0f3", color: "#e11d48", border: "1.5px solid #fecdd3" }}>
+          {error}
+        </div>
+      )}
+
+      {/* クラスター一覧 */}
+      {clusterForDisplay.length > 0 && (
+        <div className="flex flex-col gap-2" style={{ borderTop: "2px solid var(--border)", paddingTop: 14 }}>
+          <label className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--accent)" }}>
+            🎨 クラスター
+          </label>
+          {clusterForDisplay.map(cluster => (
+            <div
+              key={cluster.id}
+              className="rounded-xl p-2.5 transition-all"
+              style={{
+                background: selectedCluster?.id === cluster.id ? cluster.color + "15" : "#faf9ff",
+                border: `2px solid ${selectedCluster?.id === cluster.id ? cluster.color : "var(--border)"}`,
+              }}
+            >
+              <div className="flex items-center gap-2">
+                <span className="rounded-full flex-shrink-0" style={{ width: 10, height: 10, background: cluster.color }} />
+                {editingClusterId === cluster.id ? (
+                  <input
+                    autoFocus
+                    value={editingClusterLabel}
+                    onChange={e => setEditingClusterLabel(e.target.value)}
+                    onBlur={saveClusterLabel}
+                    onKeyDown={e => { if (e.key === "Enter") saveClusterLabel(); if (e.key === "Escape") setEditingClusterId(null); }}
+                    className="flex-1 text-sm font-bold rounded-md px-1 outline-none"
+                    style={{ border: `1.5px solid ${cluster.color}`, color: "var(--text)", background: "white" }}
+                  />
+                ) : (
+                  <button
+                    className="flex-1 text-left text-sm font-bold"
+                    style={{ color: "var(--text)" }}
+                    onClick={() => setSelectedCluster(prev => prev?.id === cluster.id ? null : cluster)}
+                  >
+                    {cluster.label}
+                  </button>
+                )}
+                <button onClick={() => startEditCluster(cluster)} className="text-xs opacity-40 hover:opacity-100 transition-opacity" title="名前を編集">✏️</button>
+              </div>
+              {selectedCluster?.id === cluster.id && editingClusterId !== cluster.id && (
+                <p className="text-xs mt-1.5 leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                  {cluster.summary}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+
+  return (
+    <div className="flex h-screen overflow-hidden" style={{ background: "var(--bg)" }}>
+
+      {/* ── デスクトップサイドバー ── */}
+      {!isMobile && (
+        <aside
+          className="flex flex-col gap-4 p-5 overflow-y-auto flex-shrink-0"
+          style={{
+            width: 300,
+            borderRight: "2px solid var(--border)",
+            background: "var(--surface)",
+            boxShadow: "4px 0 24px rgba(124,58,237,0.06)",
+          }}
+        >
+          {sidebarContent}
+        </aside>
+      )}
+
+      {/* ── モバイルドロワー ── */}
+      {isMobile && sidebarOpen && (
+        <>
+          {/* オーバーレイ */}
+          <div
+            className="fixed inset-0 z-40"
+            style={{ background: "rgba(0,0,0,0.35)" }}
+            onClick={() => setSidebarOpen(false)}
+          />
+          {/* ドロワー本体 */}
+          <div
+            className="fixed bottom-0 left-0 right-0 z-50 flex flex-col gap-4 p-5 overflow-y-auto rounded-t-3xl"
+            style={{
+              background: "var(--surface)",
+              maxHeight: "88vh",
+              boxShadow: "0 -8px 40px rgba(124,58,237,0.18)",
+            }}
+          >
+            {/* ドラッグハンドル */}
+            <div className="flex justify-center -mt-1 mb-1">
+              <div className="rounded-full" style={{ width: 36, height: 4, background: "var(--border)" }} />
+            </div>
+            {sidebarContent}
+          </div>
+        </>
+      )}
+
+      {/* ── マップエリア ── */}
+      <main className="flex-1 relative overflow-hidden" style={{ background: "#f0eeff" }}>
         {mapData && mapData.ideas.length > 0 ? (
           <IdeaMap
             ideas={mapData.ideas}
@@ -406,36 +460,34 @@ export default function Home() {
             onIdeaClick={(idea, cluster) => setDetailIdea({ idea, cluster })}
           />
         ) : (
-          <div className="flex flex-col items-center justify-center h-full gap-5">
-            <div style={{ fontSize: 80, filter: "drop-shadow(0 4px 12px rgba(0,80,160,0.18))" }}>🗺️</div>
+          <div className="flex flex-col items-center justify-center h-full gap-5 px-6">
+            <div style={{ fontSize: isMobile ? 60 : 80 }}>🧠</div>
             <div className="text-center">
-              <p
-                className="font-black text-2xl mb-2 tracking-widest uppercase"
-                style={{ color: "#1e3a5f", fontFamily: "Georgia, serif", letterSpacing: "4px" }}
-              >
+              <p className="font-black text-xl mb-2 tracking-widest uppercase" style={{ color: "#1e1a3a", fontFamily: "Georgia, serif" }}>
                 IDEA MAP
               </p>
-              <p className="text-sm leading-relaxed" style={{ color: "#4a7090" }}>
-                アイデアを入力すると、AIが大陸のような<br />クラスターマップを描き出します
+              <p className="text-sm leading-relaxed" style={{ color: "#8b85a8" }}>
+                アイデアを入力すると、AIが<br />クラスターマップを描き出します
               </p>
             </div>
-            <div
-              className="flex gap-5 mt-2 rounded-full px-6 py-2.5 text-xs font-semibold"
-              style={{ background: "rgba(255,255,255,0.6)", color: "#4a7090", border: "1px solid rgba(122,184,212,0.5)" }}
-            >
-              <span>💡 アイデアを入力</span>
-              <span style={{ opacity: 0.5 }}>→</span>
-              <span>✨ AIが分析</span>
-              <span style={{ opacity: 0.5 }}>→</span>
-              <span>🌍 大陸が出現</span>
-            </div>
+            {isMobile && (
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="rounded-2xl py-3 px-8 text-sm font-black btn-primary mt-2"
+              >
+                ＋ アイデアを追加する
+              </button>
+            )}
           </div>
         )}
 
+        {/* ヒント */}
         {mapData && !detailIdea && (
           <div
-            className="absolute bottom-4 right-4 text-xs rounded-full px-4 py-2 font-medium"
+            className="absolute text-xs rounded-full px-4 py-2 font-medium"
             style={{
+              bottom: isMobile ? 72 : 16,
+              right: 16,
               background: "rgba(255,255,255,0.9)",
               border: "1.5px solid var(--border)",
               color: "var(--text-muted)",
@@ -446,18 +498,52 @@ export default function Home() {
           </div>
         )}
 
+        {/* 詳細パネル */}
         {detailIdea && (
           <DetailPanel
             idea={detailIdea.idea}
             cluster={detailIdea.cluster}
+            clusterIdeas={mapData?.ideas.filter(i => i.clusterId === detailIdea.idea.clusterId).map(i => i.text) ?? []}
+            isMobile={isMobile}
             onClose={() => setDetailIdea(null)}
             onSave={(id, memo, image) => { saveDetail(id, memo, image); setDetailIdea(null); }}
           />
         )}
       </main>
+
+      {/* ── モバイル下部フローティングバー ── */}
+      {isMobile && (
+        <div
+          className="fixed bottom-0 left-0 right-0 z-30 flex items-center justify-between px-4 py-3"
+          style={{
+            background: "rgba(255,255,255,0.96)",
+            borderTop: "2px solid var(--border)",
+            boxShadow: "0 -4px 20px rgba(124,58,237,0.1)",
+          }}
+        >
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-all"
+            style={{ background: "#ede9fe", color: "var(--accent)" }}
+          >
+            <span>📌</span>
+            <span>アイデア {ideaCount > 0 ? `(${ideaCount})` : "を追加"}</span>
+          </button>
+
+          <button
+            onClick={generateMap}
+            disabled={loading || ideaCount < 2}
+            className="rounded-xl px-5 py-2.5 text-sm font-black btn-primary"
+          >
+            {loading ? "🌀" : "✨ 生成"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
+
+// ── OGP関連 ──────────────────────────────────────────────
 
 interface OgpData {
   url: string;
@@ -471,102 +557,81 @@ const URL_REGEX = /https?:\/\/[^\s\])"']+/g;
 
 function useLinkPreviews(text: string) {
   const [previews, setPreviews] = useState<OgpData[]>([]);
-
   useEffect(() => {
     const urls = Array.from(new Set(text.match(URL_REGEX) ?? [])).slice(0, 3);
     if (urls.length === 0) { setPreviews([]); return; }
-
     let cancelled = false;
     Promise.all(
-      urls.map(u =>
-        fetch(`/api/ogp?url=${encodeURIComponent(u)}`).then(r => r.json()).catch(() => null)
-      )
+      urls.map(u => fetch(`/api/ogp?url=${encodeURIComponent(u)}`).then(r => r.json()).catch(() => null))
     ).then(results => {
       if (!cancelled) setPreviews(results.filter(Boolean));
     });
     return () => { cancelled = true; };
   }, [text]);
-
   return previews;
 }
 
 function LinkCard({ data }: { data: OgpData }) {
   return (
-    <a
-      href={data.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="flex gap-3 rounded-xl overflow-hidden no-underline"
-      style={{
-        border: "1.5px solid var(--border)",
-        background: "#fafff7",
-        textDecoration: "none",
-      }}
-    >
-      <div
-        className="flex-shrink-0"
-        style={{ width: 4, background: "#16a34a" }}
-      />
+    <a href={data.url} target="_blank" rel="noopener noreferrer" className="flex gap-3 rounded-xl overflow-hidden" style={{ border: "1.5px solid var(--border)", background: "#fafff7", textDecoration: "none" }}>
+      <div className="flex-shrink-0" style={{ width: 4, background: "#16a34a" }} />
       <div className="flex-1 min-w-0 py-2.5 pr-2">
-        <div
-          className="text-xs mb-1 truncate"
-          style={{ color: "#2563eb" }}
-        >
-          {data.url}
-        </div>
-        <div
-          className="text-sm font-bold leading-snug mb-0.5"
-          style={{ color: "var(--text)" }}
-        >
-          {data.title}
-        </div>
+        <div className="text-xs mb-1 truncate" style={{ color: "#2563eb" }}>{data.url}</div>
+        <div className="text-sm font-bold leading-snug mb-0.5" style={{ color: "var(--text)" }}>{data.title}</div>
         {data.description && (
-          <div
-            className="text-xs leading-relaxed"
-            style={{
-              color: "var(--text-muted)",
-              display: "-webkit-box",
-              WebkitLineClamp: 2,
-              WebkitBoxOrient: "vertical",
-              overflow: "hidden",
-            }}
-          >
+          <div className="text-xs leading-relaxed" style={{ color: "var(--text-muted)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
             {data.description}
           </div>
         )}
-        <div className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
-          {data.siteName}
-        </div>
+        <div className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{data.siteName}</div>
       </div>
       {data.image && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={data.image}
-          alt=""
-          className="flex-shrink-0 object-cover"
-          style={{ width: 72, height: 72 }}
-          onError={e => (e.currentTarget.style.display = "none")}
-        />
+        <img src={data.image} alt="" className="flex-shrink-0 object-cover" style={{ width: 72, height: 72 }} onError={e => (e.currentTarget.style.display = "none")} />
       )}
     </a>
   );
 }
 
+// ── 詳細パネル ────────────────────────────────────────────
+
 function DetailPanel({
   idea,
   cluster,
+  clusterIdeas,
+  isMobile,
   onClose,
   onSave,
 }: {
   idea: PositionedIdea;
   cluster: Cluster | null;
+  clusterIdeas: string[];
+  isMobile: boolean;
   onClose: () => void;
   onSave: (id: string, memo: string, image?: string) => void;
 }) {
   const [memo, setMemo] = useState(idea.memo ?? "");
   const [image, setImage] = useState<string | undefined>(idea.image);
+  const [newsQueries, setNewsQueries] = useState<string[] | null>(null);
+  const [newsFetching, setNewsFetching] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const linkPreviews = useLinkPreviews(memo);
+
+  // クラスターの関連ニュースを取得
+  useEffect(() => {
+    if (!cluster) return;
+    setNewsFetching(true);
+    fetch("/api/news", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label: cluster.label, summary: cluster.summary, ideas: clusterIdeas }),
+    })
+      .then(r => r.json())
+      .then(data => { if (data.queries) setNewsQueries(data.queries); })
+      .catch(() => {})
+      .finally(() => setNewsFetching(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cluster?.id]);
 
   function handleImageUpload(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -576,62 +641,94 @@ function DetailPanel({
     reader.readAsDataURL(file);
   }
 
+  const panelStyle = isMobile
+    ? {
+        position: "fixed" as const,
+        left: 0, right: 0, bottom: 0,
+        height: "88vh",
+        borderRadius: "24px 24px 0 0",
+        zIndex: 60,
+      }
+    : {
+        position: "absolute" as const,
+        top: 12, right: 12, bottom: 12,
+        width: 340,
+        borderRadius: 20,
+        zIndex: 50,
+      };
+
   return (
     <div
-      className="absolute top-4 right-4 bottom-4 flex flex-col rounded-2xl overflow-hidden"
+      className="flex flex-col overflow-hidden"
       style={{
-        width: 320,
+        ...panelStyle,
         background: "rgba(255,255,255,0.97)",
         border: "2px solid var(--border)",
         boxShadow: "0 8px 40px rgba(124,58,237,0.18)",
-        zIndex: 50,
       }}
     >
       {/* ヘッダー */}
       <div className="flex items-start gap-2 p-4" style={{ borderBottom: "2px solid var(--border)" }}>
+        {isMobile && <div className="absolute left-1/2 -translate-x-1/2 top-2 rounded-full" style={{ width: 36, height: 4, background: "var(--border)" }} />}
         <span style={{ fontSize: 20 }}>📍</span>
         <div className="flex-1 min-w-0">
-          <p className="font-bold text-sm leading-snug" style={{ color: "var(--text)" }}>
-            {idea.text}
-          </p>
+          <p className="font-bold text-sm leading-snug" style={{ color: "var(--text)" }}>{idea.text}</p>
           {cluster && (
-            <span
-              className="inline-block mt-1 text-xs font-bold px-2 py-0.5 rounded-full"
-              style={{ background: cluster.color + "20", color: cluster.color }}
-            >
+            <span className="inline-block mt-1 text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: cluster.color + "20", color: cluster.color }}>
               {cluster.label}
             </span>
           )}
         </div>
-        <button
-          onClick={onClose}
-          className="flex-shrink-0 rounded-full w-7 h-7 flex items-center justify-center text-sm font-bold"
-          style={{ background: "var(--border)", color: "var(--text-muted)" }}
-        >
-          ✕
-        </button>
+        <button onClick={onClose} className="flex-shrink-0 rounded-full w-7 h-7 flex items-center justify-center text-sm font-bold" style={{ background: "var(--border)", color: "var(--text-muted)" }}>✕</button>
       </div>
 
-      {/* メモ・画像 */}
+      {/* 本文 */}
       <div className="flex flex-col gap-3 p-4 flex-1 overflow-y-auto">
-        <label className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--accent)" }}>
-          📝 メモ
-        </label>
-        <textarea
-          value={memo}
-          onChange={e => setMemo(e.target.value)}
-          placeholder="メモを入力..."
-          rows={5}
-          className="w-full resize-none rounded-xl p-3 text-sm outline-none"
-          style={{
-            background: "#faf9ff",
-            border: "2px solid var(--border)",
-            color: "var(--text)",
-            lineHeight: 1.6,
-          }}
-          onFocus={e => (e.target.style.borderColor = "#c4b3f8")}
-          onBlur={e => (e.target.style.borderColor = "var(--border)")}
-        />
+
+        {/* 関連ニュース */}
+        {cluster && (
+          <div>
+            <label className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--accent)" }}>
+              📰 関連ニュースを検索
+            </label>
+            {newsFetching ? (
+              <div className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>🔍 検索ワードを生成中…</div>
+            ) : newsQueries && newsQueries.length > 0 ? (
+              <div className="flex flex-col gap-1.5 mt-2">
+                {newsQueries.map((q, i) => (
+                  <a
+                    key={i}
+                    href={`https://news.google.com/search?q=${encodeURIComponent(q)}&hl=ja&gl=JP`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-all hover:opacity-80"
+                    style={{ background: cluster.color + "12", color: cluster.color, border: `1.5px solid ${cluster.color}30`, textDecoration: "none" }}
+                  >
+                    <span>🔎</span>
+                    <span>{q}</span>
+                  </a>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        )}
+
+        {/* メモ */}
+        <div>
+          <label className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--accent)" }}>
+            📝 メモ
+          </label>
+          <textarea
+            value={memo}
+            onChange={e => setMemo(e.target.value)}
+            placeholder="メモを入力..."
+            rows={4}
+            className="w-full resize-none rounded-xl p-3 text-sm outline-none mt-2"
+            style={{ background: "#faf9ff", border: "2px solid var(--border)", color: "var(--text)", lineHeight: 1.6 }}
+            onFocus={e => (e.target.style.borderColor = "#c4b3f8")}
+            onBlur={e => (e.target.style.borderColor = "var(--border)")}
+          />
+        </div>
 
         {linkPreviews.length > 0 && (
           <div className="flex flex-col gap-2">
@@ -639,49 +736,29 @@ function DetailPanel({
           </div>
         )}
 
-        <label className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--accent)" }}>
-          🖼️ 画像
-        </label>
-        {image ? (
-          <div className="relative rounded-xl overflow-hidden" style={{ border: "2px solid var(--border)" }}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={image} alt="添付画像" className="w-full object-cover" style={{ maxHeight: 180 }} />
-            <button
-              onClick={() => setImage(undefined)}
-              className="absolute top-2 right-2 rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold"
-              style={{ background: "rgba(0,0,0,0.5)", color: "white" }}
-            >
-              ✕
+        {/* 画像 */}
+        <div>
+          <label className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--accent)" }}>
+            🖼️ 画像
+          </label>
+          {image ? (
+            <div className="relative rounded-xl overflow-hidden mt-2" style={{ border: "2px solid var(--border)" }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={image} alt="添付画像" className="w-full object-cover" style={{ maxHeight: 160 }} />
+              <button onClick={() => setImage(undefined)} className="absolute top-2 right-2 rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold" style={{ background: "rgba(0,0,0,0.5)", color: "white" }}>✕</button>
+            </div>
+          ) : (
+            <button onClick={() => fileInputRef.current?.click()} className="w-full rounded-xl py-5 text-sm font-semibold mt-2" style={{ background: "#faf9ff", border: "2px dashed var(--border)", color: "var(--text-muted)" }}>
+              + 画像を追加
             </button>
-          </div>
-        ) : (
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="rounded-xl py-6 text-sm font-semibold"
-            style={{
-              background: "#faf9ff",
-              border: "2px dashed var(--border)",
-              color: "var(--text-muted)",
-            }}
-          >
-            + 画像を追加
-          </button>
-        )}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={handleImageUpload}
-        />
+          )}
+          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+        </div>
       </div>
 
       {/* 保存ボタン */}
       <div className="p-4" style={{ borderTop: "2px solid var(--border)" }}>
-        <button
-          onClick={() => onSave(idea.id, memo, image)}
-          className="w-full rounded-xl py-3 text-sm font-black btn-primary"
-        >
+        <button onClick={() => onSave(idea.id, memo, image)} className="w-full rounded-xl py-3 text-sm font-black btn-primary">
           💾 保存する
         </button>
       </div>
