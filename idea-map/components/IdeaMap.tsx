@@ -23,6 +23,7 @@ interface Cluster {
 export interface NewsArticle {
   title: string;
   url: string;
+  source?: string;
 }
 
 interface IdeaMapProps {
@@ -220,7 +221,7 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, onIdeaClick
         icon.transition().duration(300).delay(i * 80 + 250).attr("opacity", 1);
 
         // ラベル（ドットの外側）
-        const shortLabel = article.title.length > 9 ? article.title.slice(0, 9) + "…" : article.title;
+        const shortLabel = article.title.length > 13 ? article.title.slice(0, 13) + "…" : article.title;
         const labelR = ORBIT + 18;
         const lx = cx + Math.cos(angle) * labelR;
         const ly = cy + Math.sin(angle) * labelR;

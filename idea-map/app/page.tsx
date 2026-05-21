@@ -732,10 +732,14 @@ function DetailPanel({
                 </p>
                 {savedNews.map((a, i) => (
                   <a key={i} href={a.url} target="_blank" rel="noopener noreferrer"
-                    className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-semibold hover:opacity-75 transition-opacity"
-                    style={{ background: cluster.color + "12", color: cluster.color, border: `1.5px solid ${cluster.color}30`, textDecoration: "none" }}
+                    className="flex items-start gap-2 rounded-lg px-3 py-2 hover:opacity-75 transition-opacity"
+                    style={{ background: cluster.color + "10", border: `1.5px solid ${cluster.color}25`, textDecoration: "none" }}
                   >
-                    <span>📰</span><span>{a.title}</span>
+                    <span className="flex-shrink-0 mt-0.5">📰</span>
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold leading-snug" style={{ color: "var(--text)" }}>{a.title}</div>
+                      {a.source && <div className="text-xs mt-0.5" style={{ color: cluster.color, opacity: 0.8 }}>{a.source}</div>}
+                    </div>
                   </a>
                 ))}
                 <button onClick={fetchAndSaveNews} disabled={newsFetching} className="text-xs mt-1 rounded-lg px-3 py-1.5 font-semibold" style={{ background: "#f0ecff", color: "var(--text-muted)", border: "1.5px solid var(--border)" }}>

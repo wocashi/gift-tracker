@@ -6,39 +6,71 @@ const client = new Anthropic();
 export interface NewsArticle {
   title: string;
   url: string;
+  source?: string;
 }
 
 export async function POST(request: NextRequest) {
   const { label, summary, ideas } = await request.json();
 
   try {
-    const response = await client.messages.create({
+    // Claude の組み込みウェブ検索ツールで実際のサイトを検索
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const response = await (client.messages.create as any)({
       model: "claude-opus-4-7",
-      max_tokens: 400,
+      max_tokens: 2000,
+      tools: [{
+        type: "web_search_20250305",
+        name: "web_search",
+        max_uses: 3,
+      }],
       messages: [{
         role: "user",
-        content: `テーマ「${label}」に関連する最新ニュースを探すための日本語検索キーワードを5つ提案してください。
-テーマの概要: ${summary || "なし"}
-関連アイデア: ${(ideas as string[]).slice(0, 5).join("、")}
+        content: `「${label}」に関連するウェブサイトを検索して5件見つけてください。
+テーマ概要: ${summary || label}
+関連キーワード: ${(ideas as string[]).slice(0, 5).join("、")}
 
-各キーワードは10文字以内の短いものにしてください。
-JSON形式のみ返してください:
-{"queries": ["キーワード1", "キーワード2", "キーワード3", "キーワード4", "キーワード5"]}`,
+ニュース記事・公式サイト・企業HP・Note記事・ブログなど様々なタイプを含めてください。
+見つかったサイトを以下のJSON形式のみで返してください（前置き・説明不要）:
+{"articles": [{"title": "ページタイトル", "url": "https://...", "source": "サイト名"}, ...]}`,
       }],
     });
 
-    const text = response.content[0].type === "text" ? response.content[0].text : "";
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error("JSON not found");
-    const { queries } = JSON.parse(match[0]);
+    // Claudeのテキスト応答からJSONを抽出
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const textBlock = response.content.find((b: any) => b.type === "text");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const text: string = (textBlock as any)?.text ?? "";
 
-    // 各クエリをGoogleニュース検索URLと組み合わせてarticlesとして返す
-    const articles: NewsArticle[] = (queries as string[]).map((q: string) => ({
-      title: q,
-      url: `https://news.google.com/search?q=${encodeURIComponent(q)}&hl=ja&gl=JP&ceid=JP:ja`,
-    }));
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const { articles } = JSON.parse(jsonMatch[0]);
+      return NextResponse.json({ articles: (articles as NewsArticle[]).slice(0, 5) });
+    }
 
-    return NextResponse.json({ articles });
+    // JSONが取れない場合、web_search_tool_result ブロックから直接URL抽出
+    const articles: NewsArticle[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const block of response.content as any[]) {
+      if (block.type === "web_search_tool_result") {
+        for (const item of block.content ?? []) {
+          if (item.type === "document" && item.document?.url) {
+            articles.push({
+              title: item.document.title ?? item.document.url,
+              url: item.document.url,
+              source: (() => {
+                try { return new URL(item.document.url).hostname.replace("www.", ""); } catch { return undefined; }
+              })(),
+            });
+          }
+        }
+      }
+    }
+
+    if (articles.length > 0) {
+      return NextResponse.json({ articles: articles.slice(0, 5) });
+    }
+
+    throw new Error("検索結果を取得できませんでした");
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
