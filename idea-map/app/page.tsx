@@ -70,6 +70,7 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [mapHistory, setMapHistory] = useState<MapHistoryEntry[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [clusterResearching, setClusterResearching] = useState(false);
   const [satelliteCard, setSatelliteCard] = useState<{
     article: NewsArticle; x: number; y: number;
     ogp: OgpData | null; loading: boolean;
@@ -144,8 +145,6 @@ export default function Home() {
     setInput("");
     setUrlInput("");
     inputRef.current?.focus();
-    // 追加と同時にバックグラウンドで関連サイトを自動検索
-    autoResearchIdea(newIdea);
   }
 
   function removeIdea(id: string) {
@@ -208,8 +207,7 @@ export default function Home() {
         localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
         return updated;
       });
-      // マップ生成後、各クラスターを自動リサーチ（完了後に履歴のclusterNewsも更新）
-      autoResearchClusters(enriched.clusters, enriched.ideas, entry.id);
+      // ※ クラスターリサーチは手動ボタンで実行（トークン節約のため自動実行しない）
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "エラーが発生しました");
     } finally {
@@ -231,6 +229,13 @@ export default function Home() {
       ...prev,
       ideas: prev.ideas.map(i => i.id === id ? { ...i, news: articles } : i),
     } : null);
+  }
+
+  async function researchClusters() {
+    if (!mapData) return;
+    setClusterResearching(true);
+    await autoResearchClusters(mapData.clusters, mapData.ideas);
+    setClusterResearching(false);
   }
 
   async function autoResearchClusters(clusters: Cluster[], positionedIdeas: PositionedIdea[], historyEntryId?: string) {
@@ -576,9 +581,24 @@ export default function Home() {
       {/* クラスター一覧 */}
       {clusterForDisplay.length > 0 && (
         <div className="flex flex-col gap-2" style={{ borderTop: "2px solid var(--border)", paddingTop: 14 }}>
-          <label className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--accent)" }}>
-            🎨 クラスター
-          </label>
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--accent)" }}>
+              🎨 クラスター
+            </label>
+            <button
+              onClick={researchClusters}
+              disabled={clusterResearching}
+              className="text-xs rounded-lg px-2.5 py-1 font-bold transition-all"
+              style={{
+                background: clusterResearching ? "#e4e0f5" : "#ede9fe",
+                color: clusterResearching ? "#a78bfa" : "var(--accent)",
+                border: "1.5px solid #c4b3f8",
+              }}
+              title="各クラスターの関連サイトを検索"
+            >
+              {clusterResearching ? "⏳ 調査中…" : "🔍 関連サイトを調査"}
+            </button>
+          </div>
           {clusterForDisplay.map(cluster => (
             <div
               key={cluster.id}

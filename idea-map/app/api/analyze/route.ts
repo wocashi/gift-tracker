@@ -41,8 +41,8 @@ STEP 3: クラスター中心座標を先に決めてから、各アイデアを
 }
 クラスター色は鮮明で互いに区別しやすいHEXカラーにしてください。`;
 
-  // アイデア数に応じてmax_tokensを動的調整（アイデア1件あたり約80トークン + クラスター分の余裕）
-  const dynamicMaxTokens = Math.min(ideas.length * 80 + 1000, 4096);
+  // アイデア数に応じてmax_tokensを動的調整（アイデア1件あたり約50トークン + クラスター分の余裕）
+  const dynamicMaxTokens = Math.min(ideas.length * 50 + 600, 2000);
 
   let message;
   try {
