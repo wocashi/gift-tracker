@@ -41,6 +41,23 @@ interface IdeaMapProps {
   onNewsClick?: (article: NewsArticle, screenX: number, screenY: number) => void;
 }
 
+/**
+ * URLのハッシュ値から 0.0〜1.0 の擬似乱数を生成する
+ * relevance が未定義の古いデータでも距離がばらつくようにするフォールバック
+ */
+function urlHashFraction(url: string): number {
+  let h = 5381;
+  for (let i = 0; i < url.length; i++) {
+    h = ((h << 5) + h + url.charCodeAt(i)) >>> 0;
+  }
+  return (h % 1000) / 1000;
+}
+
+/** relevance を取得。未定義の場合は URL ハッシュでばらつかせる */
+function getRelevance(article: NewsArticle): number {
+  return article.relevance ?? urlHashFraction(article.url ?? article.title ?? "");
+}
+
 export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNewsMap = {}, onIdeaClick, onNewsClick }: IdeaMapProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -210,8 +227,9 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
         const ringIndex = isOuter ? i - innerCount : i;
         const baseOrbit = isOuter ? OUTER : INNER;
         // relevance で軌道半径を伸縮（関連度高=近い、低=遠い）
-        const rel = article.relevance ?? 0.5;
-        const ORBIT = baseOrbit * (0.65 + (1 - rel) * 0.7);
+        // rel=1.0 → 0.45× (近い)、rel=0.0 → 1.55× (遠い)
+        const rel = getRelevance(article);
+        const ORBIT = baseOrbit * (0.45 + (1 - rel) * 1.1);
         // Claudeが角度を割り当てた場合はそれを使う。なければ等間隔フォールバック
         const angle = article.angle != null
           ? (article.angle * Math.PI / 180)  // 度 → ラジアン
@@ -235,14 +253,15 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
           .attr("opacity", 0).attr("pointer-events", "none")
           .transition().duration(500).delay(i * 80).attr("opacity", 0.35);
 
-        // 衛星ドット（白丸＋色枠）
+        // 衛星ドット（白丸＋色枠）rel=1.0→r13、rel=0.0→r7
+        const dotR = Math.round(7 + rel * 6);
         const dot = sg.append("circle")
           .attr("cx", nx).attr("cy", ny).attr("r", 0)
           .attr("fill", "white")
           .attr("stroke", color).attr("stroke-width", 1.8)
           .attr("opacity", 0.9);
 
-        dot.transition().duration(400).delay(i * 80 + 100).attr("r", 10);
+        dot.transition().duration(400).delay(i * 80 + 100).attr("r", dotR);
 
         // 📰 アイコン
         const icon = sg.append("text")
@@ -294,7 +313,7 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
 
         // ホバー & クリック
         sg.on("mouseover", (event) => {
-            dot.interrupt().attr("stroke-width", 2.8).attr("r", 13);
+            dot.interrupt().attr("stroke-width", 2.8).attr("r", dotR + 3);
             const rect = containerRef.current!.getBoundingClientRect();
             setTooltip({
               x: event.clientX - rect.left,
@@ -305,7 +324,7 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
             });
           })
           .on("mouseout", () => {
-            dot.attr("stroke-width", 1.8).attr("r", 10);
+            dot.attr("stroke-width", 1.8).attr("r", dotR);
             setTooltip(null);
           })
           .on("click", (event: MouseEvent) => {
@@ -346,8 +365,9 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
 
       articles.slice(0, 5).forEach((article, i) => {
         // relevance で軌道半径を伸縮（関連度高=近い、低=遠い）
-        const rel = article.relevance ?? 0.5;
-        const ORBIT = baseOrbit * (0.75 + (1 - rel) * 0.5);
+        // rel=1.0 → 0.55× (近い)、rel=0.0 → 1.45× (遠い)
+        const rel = getRelevance(article);
+        const ORBIT = baseOrbit * (0.55 + (1 - rel) * 0.9);
 
         // Claudeが角度を割り当てた場合はそれを使う。なければ等間隔フォールバック
         const angle = article.angle != null
@@ -372,8 +392,8 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
           .attr("opacity", 0).attr("pointer-events", "none")
           .transition().duration(600).delay(i * 100).attr("opacity", 0.25);
 
-        // 衛星ドット（大きめ・relevance で少しサイズも変化）
-        const dotR = 10 + rel * 4; // rel=1.0 → r14、rel=0.0 → r10
+        // 衛星ドット（rel=1.0→r15、rel=0.0→r9）
+        const dotR = Math.round(9 + rel * 6);
         const dot = sg.append("circle")
           .attr("cx", nx).attr("cy", ny).attr("r", 0)
           .attr("fill", cluster.color)
