@@ -26,6 +26,8 @@ export interface NewsArticle {
   source?: string;
   /** 衛星の配置角度 0〜360°。似た記事は近い角度、異なる記事は遠い角度 */
   angle?: number;
+  /** トピックとの関連度 0.0〜1.0。高いほど中心に近い軌道に配置される */
+  relevance?: number;
 }
 
 interface IdeaMapProps {
@@ -206,7 +208,10 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
         const isOuter = i >= innerCount;
         const ringCount = isOuter ? articles.length - innerCount : innerCount;
         const ringIndex = isOuter ? i - innerCount : i;
-        const ORBIT = isOuter ? OUTER : INNER;
+        const baseOrbit = isOuter ? OUTER : INNER;
+        // relevance で軌道半径を伸縮（関連度高=近い、低=遠い）
+        const rel = article.relevance ?? 0.5;
+        const ORBIT = baseOrbit * (0.65 + (1 - rel) * 0.7);
         // Claudeが角度を割り当てた場合はそれを使う。なければ等間隔フォールバック
         const angle = article.angle != null
           ? (article.angle * Math.PI / 180)  // 度 → ラジアン
@@ -251,7 +256,7 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
 
         // ラベル（ドットの外側）
         const shortLabel = article.title.length > 13 ? article.title.slice(0, 13) + "…" : article.title;
-        const labelR = ORBIT + (isOuter ? 16 : 18);
+        const labelR = ORBIT + 17;
         const lx = cx + Math.cos(angle) * labelR;
         const ly = cy + Math.sin(angle) * labelR;
         const anchor = Math.cos(angle) > 0.25 ? "start" : Math.cos(angle) < -0.25 ? "end" : "middle";
@@ -323,6 +328,9 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
 
     const clusterGroups = d3.group(ideas, d => d.clusterId);
 
+    // クラスター間接続線描画用：全衛星の位置を収集
+    const allClusterSats: { clusterId: string; color: string; nx: number; ny: number }[] = [];
+
     Object.entries(clusterNewsMap).forEach(([clusterId, articles]) => {
       if (!articles?.length) return;
 
@@ -334,15 +342,22 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
       const cx = d3.mean(pts, p => p[0]) ?? 0;
       const cy = d3.mean(pts, p => p[1]) ?? 0;
       const maxDist = Math.max(...pts.map(p => Math.sqrt((p[0]-cx)**2 + (p[1]-cy)**2)), 40);
-      const ORBIT = maxDist + 85; // クラスターブロブの外側
+      const baseOrbit = maxDist + 85; // クラスターブロブの外側
 
       articles.slice(0, 5).forEach((article, i) => {
+        // relevance で軌道半径を伸縮（関連度高=近い、低=遠い）
+        const rel = article.relevance ?? 0.5;
+        const ORBIT = baseOrbit * (0.75 + (1 - rel) * 0.5);
+
         // Claudeが角度を割り当てた場合はそれを使う。なければ等間隔フォールバック
         const angle = article.angle != null
           ? (article.angle * Math.PI / 180)  // 度 → ラジアン
           : (i / Math.min(articles.length, 5)) * 2 * Math.PI - Math.PI / 2;
         const nx = cx + Math.cos(angle) * ORBIT;
         const ny = cy + Math.sin(angle) * ORBIT;
+
+        // 位置を収集（後でクラスター間接続線に使う）
+        allClusterSats.push({ clusterId, color: cluster.color, nx, ny });
 
         const sg = g.append("g")
           .attr("class", "cluster-satellite-root")
@@ -357,7 +372,8 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
           .attr("opacity", 0).attr("pointer-events", "none")
           .transition().duration(600).delay(i * 100).attr("opacity", 0.25);
 
-        // 衛星ドット（六角形的に大きめ）
+        // 衛星ドット（大きめ・relevance で少しサイズも変化）
+        const dotR = 10 + rel * 4; // rel=1.0 → r14、rel=0.0 → r10
         const dot = sg.append("circle")
           .attr("cx", nx).attr("cy", ny).attr("r", 0)
           .attr("fill", cluster.color)
@@ -365,7 +381,7 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
           .attr("stroke", cluster.color).attr("stroke-width", 1.5)
           .attr("stroke-opacity", 0.7);
 
-        dot.transition().duration(450).delay(i * 100 + 150).attr("r", 13);
+        dot.transition().duration(450).delay(i * 100 + 150).attr("r", dotR);
 
         // 🌐 アイコン
         const icon = sg.append("text")
@@ -408,7 +424,7 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
 
         // ホバー & クリック
         sg.on("mouseover", (event) => {
-            dot.interrupt().attr("r", 16).attr("opacity", 0.25).attr("stroke-width", 2.5);
+            dot.interrupt().attr("r", dotR + 3).attr("opacity", 0.25).attr("stroke-width", 2.5);
             const rect = containerRef.current!.getBoundingClientRect();
             setTooltip({
               x: event.clientX - rect.left,
@@ -419,7 +435,7 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
             });
           })
           .on("mouseout", () => {
-            dot.attr("r", 13).attr("opacity", 0.15).attr("stroke-width", 1.5);
+            dot.attr("r", dotR).attr("opacity", 0.15).attr("stroke-width", 1.5);
             setTooltip(null);
           })
           .on("click", (event: MouseEvent) => {
@@ -428,6 +444,34 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
           });
       });
     });
+
+    // ── クラスター間の衛星接続線（近い衛星同士を薄い線で繋ぐ）──────────────
+    const CROSS_LINK_THRESHOLD = 140; // px以内なら接続
+    for (let a = 0; a < allClusterSats.length; a++) {
+      for (let b = a + 1; b < allClusterSats.length; b++) {
+        const sa = allClusterSats[a];
+        const sb = allClusterSats[b];
+        if (sa.clusterId === sb.clusterId) continue; // 同クラスターはスキップ
+
+        const dist = Math.sqrt((sa.nx - sb.nx) ** 2 + (sa.ny - sb.ny) ** 2);
+        if (dist > CROSS_LINK_THRESHOLD) continue;
+
+        // 距離が近いほど濃く（最大 opacity 0.22）
+        const opacity = (1 - dist / CROSS_LINK_THRESHOLD) * 0.22;
+
+        g.insert("line", ".cluster-satellite-root")
+          .attr("class", "cluster-satellite-root cross-cluster-link")
+          .attr("x1", sa.nx).attr("y1", sa.ny)
+          .attr("x2", sb.nx).attr("y2", sb.ny)
+          .attr("stroke", "white")
+          .attr("stroke-width", 1)
+          .attr("stroke-dasharray", "4 5")
+          .attr("opacity", 0)
+          .attr("pointer-events", "none")
+          .transition().duration(800).delay(400)
+          .attr("opacity", opacity);
+      }
+    }
 
   }, [clusterNewsMap, ideas, clusters]);
 
