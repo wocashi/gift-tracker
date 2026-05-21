@@ -39,6 +39,7 @@ function generateId() {
 
 const STORAGE_KEY = "idea-map-ideas";
 const HISTORY_KEY = "idea-map-history";
+const CURRENT_MAP_KEY = "idea-map-current";
 const MAX_HISTORY = 8;
 
 interface MapHistoryEntry {
@@ -82,7 +83,21 @@ export default function Home() {
     if (saved) setIdeas(JSON.parse(saved));
     const hist = localStorage.getItem(HISTORY_KEY);
     if (hist) setMapHistory(JSON.parse(hist));
+    // 最後のマップ状態を復元
+    const current = localStorage.getItem(CURRENT_MAP_KEY);
+    if (current) {
+      const { mapData: md, clusterNews: cn } = JSON.parse(current);
+      if (md) setMapData(md);
+      if (cn) setClusterNews(cn);
+    }
   }, []);
+
+  // mapData・clusterNews が変わるたびに localStorage に保存
+  useEffect(() => {
+    if (mapData) {
+      localStorage.setItem(CURRENT_MAP_KEY, JSON.stringify({ mapData, clusterNews }));
+    }
+  }, [mapData, clusterNews]);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -338,6 +353,7 @@ export default function Home() {
     setSelectedCluster(null);
     setDetailIdea(null);
     setConfirmClear(false);
+    localStorage.removeItem(CURRENT_MAP_KEY);
   }
 
   function startEditCluster(cluster: Cluster) {
