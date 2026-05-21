@@ -52,6 +52,8 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
     yScale: d3.ScaleLinear<number, number>;
   } | null>(null);
   const gRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  // ズーム位置を跨いで保持する（再描画でリセットされないように）
+  const zoomTransformRef = useRef<d3.ZoomTransform>(d3.zoomIdentity);
 
   const [tooltip, setTooltip] = useState<{
     x: number; y: number;
@@ -92,8 +94,16 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
 
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.25, 10])
-      .on("zoom", (ev) => { g.attr("transform", ev.transform); setTooltip(null); });
+      .on("zoom", (ev) => {
+        g.attr("transform", ev.transform);
+        zoomTransformRef.current = ev.transform; // ズーム位置を保存
+        setTooltip(null);
+      });
     svg.call(zoom);
+    // 前回のズーム位置を復元（再描画後もズームが維持される）
+    if (zoomTransformRef.current !== d3.zoomIdentity) {
+      svg.call(zoom.transform, zoomTransformRef.current);
+    }
 
     const clusterGroups = d3.group(ideas, d => d.clusterId);
 
