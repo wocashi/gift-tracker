@@ -28,8 +28,8 @@ export async function POST(request: NextRequest) {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const response = await (client.messages.create as any)({
-      model: "claude-opus-4-7",
-      max_tokens: 3000,
+      model: "claude-sonnet-4-6",
+      max_tokens: 1000,
       tools: [{
         type: "web_search_20250305",
         name: "web_search",

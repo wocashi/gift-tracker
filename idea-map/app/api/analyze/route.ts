@@ -12,10 +12,8 @@ export async function POST(request: NextRequest) {
 
   const ideaList = ideas.map((idea, i) => `${i + 1}. [${idea.id}] ${idea.text}`).join("\n");
 
-  const prompt = `あなたは意味マッピングの専門家です。以下のアイデアを分析し、クラスター間の関係性まで考慮した2D意味マップを作成してください。
-
-アイデア一覧:
-${ideaList}
+  // 固定の指示部分（キャッシュ対象）
+  const systemPrompt = `あなたは意味マッピングの専門家です。ユーザーが送るアイデア一覧を分析し、クラスター間の関係性まで考慮した2D意味マップを作成してください。
 
 【思考ステップ】
 STEP 1: アイデアをテーマでグループ分けし、2〜6個のクラスターを決める
@@ -41,16 +39,22 @@ STEP 3: クラスター中心座標を先に決めてから、各アイデアを
     {"id": "c1", "label": "クラスター名", "summary": "1〜2文の日本語要約", "color": "#16a34a"}
   ]
 }
-
-使用するアイデアID: ${ideas.map(i => `"${i.id}"`).join(", ")}
 クラスター色は鮮明で互いに区別しやすいHEXカラーにしてください。`;
+
+  // アイデア数に応じてmax_tokensを動的調整（アイデア1件あたり約80トークン + クラスター分の余裕）
+  const dynamicMaxTokens = Math.min(ideas.length * 80 + 1000, 4096);
 
   let message;
   try {
     message = await client.messages.create({
       model: "claude-opus-4-7",
-      max_tokens: 4096,
-      messages: [{ role: "user", content: prompt }],
+      max_tokens: dynamicMaxTokens,
+      // @ts-expect-error cache_control はbeta機能のため型定義に含まれていない
+      system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
+      messages: [{
+        role: "user",
+        content: `アイデア一覧:\n${ideaList}\n\n使用するアイデアID: ${ideas.map(i => `"${i.id}"`).join(", ")}`,
+      }],
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
