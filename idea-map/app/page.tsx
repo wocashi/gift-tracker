@@ -53,6 +53,7 @@ export default function Home() {
   const [confirmClear, setConfirmClear] = useState(false);
   const [editingClusterId, setEditingClusterId] = useState<string | null>(null);
   const [editingClusterLabel, setEditingClusterLabel] = useState("");
+  const [autoResearchIds, setAutoResearchIds] = useState<Set<string>>(new Set());
   const [isMobile, setIsMobile] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [satelliteCard, setSatelliteCard] = useState<{
@@ -122,10 +123,13 @@ export default function Home() {
     const text = input.trim();
     if (!text) return;
     const url = urlInput.trim() || undefined;
-    setIdeas(prev => [...prev, { id: generateId(), text, url }]);
+    const newIdea: Idea = { id: generateId(), text, url };
+    setIdeas(prev => [...prev, newIdea]);
     setInput("");
     setUrlInput("");
     inputRef.current?.focus();
+    // 追加と同時にバックグラウンドで関連サイトを自動検索
+    autoResearchIdea(newIdea);
   }
 
   function removeIdea(id: string) {
@@ -195,6 +199,26 @@ export default function Home() {
       ...prev,
       ideas: prev.ideas.map(i => i.id === id ? { ...i, news: articles } : i),
     } : null);
+  }
+
+  async function autoResearchIdea(idea: Idea) {
+    setAutoResearchIds(prev => new Set([...prev, idea.id]));
+    try {
+      const res = await fetch("/api/news", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: idea.text,
+          summary: "",
+          ideas: [],
+          memo: idea.url ? `参考URL: ${idea.url}` : "",
+        }),
+      });
+      const data = await res.json();
+      if (data.articles?.length) saveNews(idea.id, data.articles);
+    } catch { /* ignore */ } finally {
+      setAutoResearchIds(prev => { const s = new Set(prev); s.delete(idea.id); return s; });
+    }
   }
 
   async function handleNewsClick(article: NewsArticle, x: number, y: number) {
@@ -349,6 +373,11 @@ export default function Home() {
                     {idea.text}
                     {idea.memo && <span className="ml-1 text-xs" style={{ color: "var(--text-muted)" }}>📝</span>}
                     {idea.image && <span className="ml-1 text-xs">🖼️</span>}
+                    {autoResearchIds.has(idea.id)
+                      ? <span className="ml-1 text-xs animate-spin inline-block">🔍</span>
+                      : idea.news?.length
+                        ? <span className="ml-1 text-xs" title={`${idea.news.length}件の関連サイト保存済み`}>📰</span>
+                        : null}
                   </span>
                   {idea.url && (
                     <a

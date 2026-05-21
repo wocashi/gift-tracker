@@ -31,14 +31,14 @@ export async function POST(request: NextRequest) {
       tools: [{
         type: "web_search_20250305",
         name: "web_search",
-        max_uses: 5,
+        max_uses: 3,
       }],
       messages: [{
         role: "user",
         content: `${searchInstruction}
 ${context}
 
-ニュース記事・公式サイト・企業HP・Note記事・ブログ・Wikipedia など幅広いタイプを含めてください。
+ニュース記事・公式サイト・企業HP・Note記事・ブログ・Wikipedia など幅広いタイプを含め、5件見つけてください。
 見つかったサイトを以下のJSON形式のみで返してください（前置き・説明不要）:
 {"articles": [{"title": "ページタイトル", "url": "https://...", "source": "サイト名"}, ...]}`,
       }],
@@ -53,7 +53,7 @@ ${context}
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       const { articles } = JSON.parse(jsonMatch[0]);
-      return NextResponse.json({ articles: (articles as NewsArticle[]).slice(0, 10) });
+      return NextResponse.json({ articles: (articles as NewsArticle[]).slice(0, 5) });
     }
 
     // フォールバック: tool_result ブロックからURL直接抽出
@@ -77,7 +77,7 @@ ${context}
     }
 
     if (articles.length > 0) {
-      return NextResponse.json({ articles: articles.slice(0, 10) });
+      return NextResponse.json({ articles: articles.slice(0, 5) });
     }
 
     throw new Error("検索結果を取得できませんでした");
