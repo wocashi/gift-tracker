@@ -55,6 +55,10 @@ export default function Home() {
   const [editingClusterLabel, setEditingClusterLabel] = useState("");
   const [isMobile, setIsMobile] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [satelliteCard, setSatelliteCard] = useState<{
+    article: NewsArticle; x: number; y: number;
+    ogp: OgpData | null; loading: boolean;
+  } | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -191,6 +195,17 @@ export default function Home() {
       ...prev,
       ideas: prev.ideas.map(i => i.id === id ? { ...i, news: articles } : i),
     } : null);
+  }
+
+  async function handleNewsClick(article: NewsArticle, x: number, y: number) {
+    setSatelliteCard({ article, x, y, ogp: null, loading: true });
+    try {
+      const res = await fetch(`/api/ogp?url=${encodeURIComponent(article.url)}`);
+      const ogp: OgpData = await res.json();
+      setSatelliteCard(prev => prev ? { ...prev, ogp, loading: false } : null);
+    } catch {
+      setSatelliteCard(prev => prev ? { ...prev, loading: false } : null);
+    }
   }
 
   function clearAll() {
@@ -485,7 +500,8 @@ export default function Home() {
             ideaNewsMap={Object.fromEntries(
               ideas.filter(i => i.news?.length).map(i => [i.id, i.news!])
             )}
-            onIdeaClick={(idea, cluster) => setDetailIdea({ idea, cluster })}
+            onIdeaClick={(idea, cluster) => { setDetailIdea({ idea, cluster }); setSatelliteCard(null); }}
+            onNewsClick={handleNewsClick}
           />
         ) : (
           <div className="flex flex-col items-center justify-center h-full gap-5 px-6">
@@ -527,6 +543,19 @@ export default function Home() {
         )}
 
         {/* 詳細パネル */}
+        {/* 衛星サマリーカード */}
+        {satelliteCard && (
+          <SatelliteCard
+            article={satelliteCard.article}
+            ogp={satelliteCard.ogp}
+            loading={satelliteCard.loading}
+            x={satelliteCard.x}
+            y={satelliteCard.y}
+            isMobile={isMobile}
+            onClose={() => setSatelliteCard(null)}
+          />
+        )}
+
         {detailIdea && (
           <DetailPanel
             idea={detailIdea.idea}
@@ -598,6 +627,85 @@ function useLinkPreviews(text: string) {
     return () => { cancelled = true; };
   }, [text]);
   return previews;
+}
+
+function SatelliteCard({
+  article, ogp, loading, x, y, isMobile, onClose,
+}: {
+  article: NewsArticle; ogp: OgpData | null; loading: boolean;
+  x: number; y: number; isMobile: boolean; onClose: () => void;
+}) {
+  const cardW = 300;
+  const cardH = 260;
+
+  // 画面端からはみ出さないよう位置調整（モバイルは中央固定）
+  const style = isMobile
+    ? { position: "fixed" as const, left: "50%", bottom: 80, transform: "translateX(-50%)", width: cardW, zIndex: 55 }
+    : { position: "absolute" as const, left: Math.min(x + 12, window.innerWidth - cardW - 20), top: Math.max(y - cardH / 2, 8), width: cardW, zIndex: 55 };
+
+  return (
+    <div
+      style={{
+        ...style,
+        background: "rgba(255,255,255,0.98)",
+        border: "2px solid var(--border)",
+        borderRadius: 18,
+        boxShadow: "0 8px 40px rgba(124,58,237,0.18)",
+        overflow: "hidden",
+      }}
+    >
+      {/* ヘッダー */}
+      <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: "1.5px solid var(--border)" }}>
+        <span className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--accent)" }}>📰 サイト概要</span>
+        <button onClick={onClose} className="rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold" style={{ background: "var(--border)", color: "var(--text-muted)" }}>✕</button>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-10 text-sm" style={{ color: "var(--text-muted)" }}>
+          <span className="animate-spin mr-2">⏳</span> 読み込み中…
+        </div>
+      ) : (
+        <div className="p-4 flex flex-col gap-3">
+          {/* OGP 画像 */}
+          {ogp?.image && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={ogp.image} alt="" className="w-full object-cover rounded-xl" style={{ maxHeight: 120 }} onError={e => (e.currentTarget.style.display = "none")} />
+          )}
+
+          {/* タイトル */}
+          <div>
+            <div className="font-bold text-sm leading-snug" style={{ color: "var(--text)" }}>
+              {ogp?.title || article.title}
+            </div>
+            {(ogp?.siteName || article.source) && (
+              <div className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
+                {ogp?.siteName || article.source}
+              </div>
+            )}
+          </div>
+
+          {/* 説明文（サマリー） */}
+          {ogp?.description && (
+            <div className="text-xs leading-relaxed rounded-xl p-3" style={{ background: "#faf9ff", color: "var(--text-muted)", border: "1.5px solid var(--border)" }}>
+              {ogp.description}
+            </div>
+          )}
+
+          {/* 開くボタン */}
+          <a
+            href={article.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-black btn-primary"
+            style={{ textDecoration: "none" }}
+          >
+            <span>🌐</span>
+            <span>このサイトを開く</span>
+          </a>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function LinkCard({ data }: { data: OgpData }) {

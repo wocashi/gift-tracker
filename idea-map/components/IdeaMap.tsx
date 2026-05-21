@@ -32,13 +32,16 @@ interface IdeaMapProps {
   /** ideaId → その点に紐づく衛星ニュース */
   ideaNewsMap?: Record<string, NewsArticle[]>;
   onIdeaClick?: (idea: PositionedIdea, cluster: Cluster | null) => void;
+  onNewsClick?: (article: NewsArticle, screenX: number, screenY: number) => void;
 }
 
-export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, onIdeaClick }: IdeaMapProps) {
+export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, onIdeaClick, onNewsClick }: IdeaMapProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const onIdeaClickRef = useRef(onIdeaClick);
   onIdeaClickRef.current = onIdeaClick;
+  const onNewsClickRef = useRef(onNewsClick);
+  onNewsClickRef.current = onNewsClick;
 
   const scalesRef = useRef<{
     xScale: d3.ScaleLinear<number, number>;
@@ -283,8 +286,9 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, onIdeaClick
             dot.attr("stroke-width", 1.8).attr("r", 10);
             setTooltip(null);
           })
-          .on("click", () => {
-            window.open(article.url, "_blank");
+          .on("click", (event: MouseEvent) => {
+            const rect = containerRef.current!.getBoundingClientRect();
+            onNewsClickRef.current?.(article, event.clientX - rect.left, event.clientY - rect.top);
           });
       });
     });
