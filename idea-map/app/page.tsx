@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, KeyboardEvent, ChangeEvent } from "react";
 import dynamic from "next/dynamic";
+import type { NewsOverlay } from "@/components/IdeaMap";
 
 const IdeaMap = dynamic(() => import("@/components/IdeaMap"), { ssr: false });
 
@@ -51,6 +52,7 @@ export default function Home() {
   const [confirmClear, setConfirmClear] = useState(false);
   const [editingClusterId, setEditingClusterId] = useState<string | null>(null);
   const [editingClusterLabel, setEditingClusterLabel] = useState("");
+  const [newsOverlay, setNewsOverlay] = useState<NewsOverlay | null>(null);
   const [isMobile, setIsMobile] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -59,6 +61,25 @@ export default function Home() {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) setIdeas(JSON.parse(saved));
   }, []);
+
+  // detailIdea が開かれたらニュースを取得してマップ上にオーバーレイ
+  useEffect(() => {
+    if (!detailIdea?.cluster) { setNewsOverlay(null); return; }
+    const { idea, cluster } = detailIdea;
+    const clusterIdeas = mapData?.ideas.filter(i => i.clusterId === idea.clusterId).map(i => i.text) ?? [];
+    fetch("/api/news", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label: cluster.label, summary: cluster.summary, ideas: clusterIdeas }),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.queries) setNewsOverlay({ ideaId: idea.id, queries: data.queries });
+      })
+      .catch(() => {});
+    return () => setNewsOverlay(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailIdea?.idea.id]);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -457,6 +478,7 @@ export default function Home() {
           <IdeaMap
             ideas={mapData.ideas}
             clusters={mapData.clusters}
+            newsOverlay={newsOverlay}
             onIdeaClick={(idea, cluster) => setDetailIdea({ idea, cluster })}
           />
         ) : (
@@ -503,7 +525,6 @@ export default function Home() {
           <DetailPanel
             idea={detailIdea.idea}
             cluster={detailIdea.cluster}
-            clusterIdeas={mapData?.ideas.filter(i => i.clusterId === detailIdea.idea.clusterId).map(i => i.text) ?? []}
             isMobile={isMobile}
             onClose={() => setDetailIdea(null)}
             onSave={(id, memo, image) => { saveDetail(id, memo, image); setDetailIdea(null); }}
@@ -598,40 +619,20 @@ function LinkCard({ data }: { data: OgpData }) {
 function DetailPanel({
   idea,
   cluster,
-  clusterIdeas,
   isMobile,
   onClose,
   onSave,
 }: {
   idea: PositionedIdea;
   cluster: Cluster | null;
-  clusterIdeas: string[];
   isMobile: boolean;
   onClose: () => void;
   onSave: (id: string, memo: string, image?: string) => void;
 }) {
   const [memo, setMemo] = useState(idea.memo ?? "");
   const [image, setImage] = useState<string | undefined>(idea.image);
-  const [newsQueries, setNewsQueries] = useState<string[] | null>(null);
-  const [newsFetching, setNewsFetching] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const linkPreviews = useLinkPreviews(memo);
-
-  // クラスターの関連ニュースを取得
-  useEffect(() => {
-    if (!cluster) return;
-    setNewsFetching(true);
-    fetch("/api/news", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ label: cluster.label, summary: cluster.summary, ideas: clusterIdeas }),
-    })
-      .then(r => r.json())
-      .then(data => { if (data.queries) setNewsQueries(data.queries); })
-      .catch(() => {})
-      .finally(() => setNewsFetching(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cluster?.id]);
 
   function handleImageUpload(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -685,31 +686,11 @@ function DetailPanel({
       {/* 本文 */}
       <div className="flex flex-col gap-3 p-4 flex-1 overflow-y-auto">
 
-        {/* 関連ニュース */}
+        {/* ニュースはマップ上に点で表示中 */}
         {cluster && (
-          <div>
-            <label className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--accent)" }}>
-              📰 関連ニュースを検索
-            </label>
-            {newsFetching ? (
-              <div className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>🔍 検索ワードを生成中…</div>
-            ) : newsQueries && newsQueries.length > 0 ? (
-              <div className="flex flex-col gap-1.5 mt-2">
-                {newsQueries.map((q, i) => (
-                  <a
-                    key={i}
-                    href={`https://news.google.com/search?q=${encodeURIComponent(q)}&hl=ja&gl=JP`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-all hover:opacity-80"
-                    style={{ background: cluster.color + "12", color: cluster.color, border: `1.5px solid ${cluster.color}30`, textDecoration: "none" }}
-                  >
-                    <span>🔎</span>
-                    <span>{q}</span>
-                  </a>
-                ))}
-              </div>
-            ) : null}
+          <div className="rounded-xl px-3 py-2 text-xs font-semibold flex items-center gap-2" style={{ background: cluster.color + "10", color: cluster.color, border: `1.5px solid ${cluster.color}25` }}>
+            <span>📰</span>
+            <span>マップ上に関連ニュースを表示中</span>
           </div>
         )}
 
