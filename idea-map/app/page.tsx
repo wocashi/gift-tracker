@@ -38,6 +38,17 @@ function generateId() {
 }
 
 const STORAGE_KEY = "idea-map-ideas";
+const HISTORY_KEY = "idea-map-history";
+const MAX_HISTORY = 8;
+
+interface MapHistoryEntry {
+  id: string;
+  timestamp: number;
+  label: string; // クラスター名をつないだ自動ラベル
+  mapData: MapData;
+  clusterNews: Record<string, NewsArticle[]>;
+  ideas: Idea[];
+}
 
 export default function Home() {
   const [ideas, setIdeas] = useState<Idea[]>([]);
@@ -57,6 +68,8 @@ export default function Home() {
   const [clusterNews, setClusterNews] = useState<Record<string, NewsArticle[]>>({});
   const [isMobile, setIsMobile] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [mapHistory, setMapHistory] = useState<MapHistoryEntry[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [satelliteCard, setSatelliteCard] = useState<{
     article: NewsArticle; x: number; y: number;
     ogp: OgpData | null; loading: boolean;
@@ -66,6 +79,8 @@ export default function Home() {
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) setIdeas(JSON.parse(saved));
+    const hist = localStorage.getItem(HISTORY_KEY);
+    if (hist) setMapHistory(JSON.parse(hist));
   }, []);
 
   useEffect(() => {
@@ -179,8 +194,22 @@ export default function Home() {
         })),
       };
       setMapData(enriched);
-      // マップ生成後、各クラスターを自動リサーチ
-      autoResearchClusters(enriched.clusters, enriched.ideas);
+      // 履歴に保存
+      const entry: MapHistoryEntry = {
+        id: generateId(),
+        timestamp: Date.now(),
+        label: enriched.clusters.map(c => c.label).join(" · "),
+        mapData: enriched,
+        clusterNews: {},
+        ideas: ideas,
+      };
+      setMapHistory(prev => {
+        const updated = [entry, ...prev].slice(0, MAX_HISTORY);
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
+        return updated;
+      });
+      // マップ生成後、各クラスターを自動リサーチ（完了後に履歴のclusterNewsも更新）
+      autoResearchClusters(enriched.clusters, enriched.ideas, entry.id);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "エラーが発生しました");
     } finally {
@@ -204,7 +233,8 @@ export default function Home() {
     } : null);
   }
 
-  async function autoResearchClusters(clusters: Cluster[], positionedIdeas: PositionedIdea[]) {
+  async function autoResearchClusters(clusters: Cluster[], positionedIdeas: PositionedIdea[], historyEntryId?: string) {
+    const collected: Record<string, NewsArticle[]> = {};
     // 全クラスターを並列でリサーチ
     await Promise.all(clusters.map(async (cluster) => {
       const clusterIdeaTexts = positionedIdeas
@@ -223,10 +253,15 @@ export default function Home() {
         });
         const data = await res.json();
         if (data.articles?.length) {
+          collected[cluster.id] = data.articles;
           setClusterNews(prev => ({ ...prev, [cluster.id]: data.articles }));
         }
       } catch { /* ignore */ }
     }));
+    // 全クラスター完了後、履歴のclusterNewsを更新
+    if (historyEntryId && Object.keys(collected).length > 0) {
+      updateHistoryClusterNews(historyEntryId, collected);
+    }
   }
 
   async function autoResearchIdea(idea: Idea) {
@@ -258,6 +293,36 @@ export default function Home() {
     } catch {
       setSatelliteCard(prev => prev ? { ...prev, loading: false } : null);
     }
+  }
+
+  // 履歴のclusterNewsを更新（autoResearchClusters完了後）
+  function updateHistoryClusterNews(entryId: string, news: Record<string, NewsArticle[]>) {
+    setMapHistory(prev => {
+      const updated = prev.map(e => e.id === entryId ? { ...e, clusterNews: news } : e);
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
+      return updated;
+    });
+  }
+
+  // 履歴から復元
+  function restoreFromHistory(entry: MapHistoryEntry) {
+    setMapData(entry.mapData);
+    setClusterNews(entry.clusterNews);
+    setIdeas(entry.ideas);
+    setSelectedCluster(null);
+    setDetailIdea(null);
+    setSatelliteCard(null);
+    setHistoryOpen(false);
+    if (isMobile) setSidebarOpen(false);
+  }
+
+  function deleteHistory(id: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    setMapHistory(prev => {
+      const updated = prev.filter(h => h.id !== id);
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
+      return updated;
+    });
   }
 
   function clearAll() {
@@ -446,6 +511,60 @@ export default function Home() {
         <p className="text-xs text-center" style={{ color: "var(--text-muted)", marginTop: -8 }}>
           あと1件追加すると生成できます
         </p>
+      )}
+
+      {/* 過去のマップ履歴 */}
+      {mapHistory.length > 0 && (
+        <div style={{ borderTop: "2px solid var(--border)", paddingTop: 14 }}>
+          <button
+            onClick={() => setHistoryOpen(v => !v)}
+            className="w-full flex items-center justify-between text-xs font-bold uppercase tracking-widest"
+            style={{ color: "var(--accent)", background: "none", border: "none", cursor: "pointer" }}
+          >
+            <span>🕐 過去のマップ ({mapHistory.length})</span>
+            <span style={{ fontSize: 16, fontWeight: 400, opacity: 0.6 }}>{historyOpen ? "▲" : "▼"}</span>
+          </button>
+
+          {historyOpen && (
+            <div className="flex flex-col gap-1.5 mt-2 max-h-56 overflow-y-auto">
+              {mapHistory.map(entry => {
+                const d = new Date(entry.timestamp);
+                const dateStr = `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+                return (
+                  <div
+                    key={entry.id}
+                    onClick={() => restoreFromHistory(entry)}
+                    className="group rounded-xl p-2.5 flex items-start gap-2 transition-all"
+                    style={{
+                      background: "#faf9ff",
+                      border: "2px solid var(--border)",
+                      cursor: "pointer",
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.borderColor = "#c4b3f8")}
+                    onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--border)")}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold leading-snug truncate" style={{ color: "var(--text)" }}>
+                        {entry.label || "マップ"}
+                      </div>
+                      <div className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
+                        {dateStr} · {entry.ideas.length}件
+                      </div>
+                    </div>
+                    <button
+                      onClick={(e) => deleteHistory(entry.id, e)}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-xs rounded-full w-5 h-5 flex items-center justify-center"
+                      style={{ background: "var(--border)", color: "var(--text-muted)" }}
+                      title="削除"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       )}
 
       {error && (

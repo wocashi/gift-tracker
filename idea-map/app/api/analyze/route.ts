@@ -49,8 +49,8 @@ STEP 3: クラスター中心座標を先に決めてから、各アイデアを
     message = await client.messages.create({
       model: "claude-opus-4-7",
       max_tokens: dynamicMaxTokens,
-      // @ts-expect-error cache_control はbeta機能のため型定義に含まれていない
-      system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }] as any,
       messages: [{
         role: "user",
         content: `アイデア一覧:\n${ideaList}\n\n使用するアイデアID: ${ideas.map(i => `"${i.id}"`).join(", ")}`,
