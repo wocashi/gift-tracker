@@ -54,6 +54,7 @@ export default function Home() {
   const [editingClusterId, setEditingClusterId] = useState<string | null>(null);
   const [editingClusterLabel, setEditingClusterLabel] = useState("");
   const [autoResearchIds, setAutoResearchIds] = useState<Set<string>>(new Set());
+  const [clusterNews, setClusterNews] = useState<Record<string, NewsArticle[]>>({});
   const [isMobile, setIsMobile] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [satelliteCard, setSatelliteCard] = useState<{
@@ -178,6 +179,8 @@ export default function Home() {
         })),
       };
       setMapData(enriched);
+      // マップ生成後、各クラスターを自動リサーチ
+      autoResearchClusters(enriched.clusters, enriched.ideas);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "エラーが発生しました");
     } finally {
@@ -199,6 +202,31 @@ export default function Home() {
       ...prev,
       ideas: prev.ideas.map(i => i.id === id ? { ...i, news: articles } : i),
     } : null);
+  }
+
+  async function autoResearchClusters(clusters: Cluster[], positionedIdeas: PositionedIdea[]) {
+    // 全クラスターを並列でリサーチ
+    await Promise.all(clusters.map(async (cluster) => {
+      const clusterIdeaTexts = positionedIdeas
+        .filter(i => i.clusterId === cluster.id)
+        .map(i => i.text);
+      try {
+        const res = await fetch("/api/news", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            label: cluster.label,
+            summary: cluster.summary,
+            ideas: clusterIdeaTexts,
+            memo: "",
+          }),
+        });
+        const data = await res.json();
+        if (data.articles?.length) {
+          setClusterNews(prev => ({ ...prev, [cluster.id]: data.articles }));
+        }
+      } catch { /* ignore */ }
+    }));
   }
 
   async function autoResearchIdea(idea: Idea) {
@@ -235,6 +263,7 @@ export default function Home() {
   function clearAll() {
     setIdeas([]);
     setMapData(null);
+    setClusterNews({});
     setError("");
     setSelectedCluster(null);
     setDetailIdea(null);
@@ -529,6 +558,7 @@ export default function Home() {
             ideaNewsMap={Object.fromEntries(
               ideas.filter(i => i.news?.length).map(i => [i.id, i.news!])
             )}
+            clusterNewsMap={clusterNews}
             onIdeaClick={(idea, cluster) => { setDetailIdea({ idea, cluster }); setSatelliteCard(null); }}
             onNewsClick={handleNewsClick}
           />

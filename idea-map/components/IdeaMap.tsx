@@ -29,13 +29,15 @@ export interface NewsArticle {
 interface IdeaMapProps {
   ideas: PositionedIdea[];
   clusters: Cluster[];
-  /** ideaId → その点に紐づく衛星ニュース */
+  /** ideaId → アイデアに紐づく衛星ニュース（小軌道）*/
   ideaNewsMap?: Record<string, NewsArticle[]>;
+  /** clusterId → クラスターに紐づく衛星ニュース（大軌道）*/
+  clusterNewsMap?: Record<string, NewsArticle[]>;
   onIdeaClick?: (idea: PositionedIdea, cluster: Cluster | null) => void;
   onNewsClick?: (article: NewsArticle, screenX: number, screenY: number) => void;
 }
 
-export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, onIdeaClick, onNewsClick }: IdeaMapProps) {
+export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNewsMap = {}, onIdeaClick, onNewsClick }: IdeaMapProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const onIdeaClickRef = useRef(onIdeaClick);
@@ -295,6 +297,121 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, onIdeaClick
 
   // ideaNewsMapが変わったとき（保存時）に再描画。ideas/clustersが変わったときも再描画。
   }, [ideaNewsMap, ideas, clusters]);
+
+  // ── クラスター衛星ドット（大軌道・🌐アイコン）─────────
+  useEffect(() => {
+    const g = gRef.current;
+    const scales = scalesRef.current;
+    if (!g || !scales) return;
+
+    g.selectAll(".cluster-satellite-root").remove();
+
+    const clusterGroups = d3.group(ideas, d => d.clusterId);
+
+    Object.entries(clusterNewsMap).forEach(([clusterId, articles]) => {
+      if (!articles?.length) return;
+
+      const cluster = clusters.find(c => c.id === clusterId);
+      if (!cluster) return;
+
+      const cIdeas = clusterGroups.get(clusterId) ?? [];
+      const pts = cIdeas.map(d => [scales.xScale(d.x), scales.yScale(d.y)] as [number, number]);
+      const cx = d3.mean(pts, p => p[0]) ?? 0;
+      const cy = d3.mean(pts, p => p[1]) ?? 0;
+      const maxDist = Math.max(...pts.map(p => Math.sqrt((p[0]-cx)**2 + (p[1]-cy)**2)), 40);
+      const ORBIT = maxDist + 85; // クラスターブロブの外側
+
+      articles.slice(0, 5).forEach((article, i) => {
+        const angle = (i / Math.min(articles.length, 5)) * 2 * Math.PI - Math.PI / 2;
+        const nx = cx + Math.cos(angle) * ORBIT;
+        const ny = cy + Math.sin(angle) * ORBIT;
+
+        const sg = g.append("g")
+          .attr("class", "cluster-satellite-root")
+          .style("cursor", "pointer");
+
+        // 接続線（クラスター中心から）
+        sg.append("line")
+          .attr("x1", cx).attr("y1", cy)
+          .attr("x2", nx).attr("y2", ny)
+          .attr("stroke", cluster.color).attr("stroke-width", 0.6)
+          .attr("stroke-dasharray", "2 6")
+          .attr("opacity", 0).attr("pointer-events", "none")
+          .transition().duration(600).delay(i * 100).attr("opacity", 0.25);
+
+        // 衛星ドット（六角形的に大きめ）
+        const dot = sg.append("circle")
+          .attr("cx", nx).attr("cy", ny).attr("r", 0)
+          .attr("fill", cluster.color)
+          .attr("opacity", 0.15)
+          .attr("stroke", cluster.color).attr("stroke-width", 1.5)
+          .attr("stroke-opacity", 0.7);
+
+        dot.transition().duration(450).delay(i * 100 + 150).attr("r", 13);
+
+        // 🌐 アイコン
+        const icon = sg.append("text")
+          .attr("x", nx).attr("y", ny + 1)
+          .attr("text-anchor", "middle").attr("dominant-baseline", "middle")
+          .attr("font-size", "11px").attr("opacity", 0)
+          .attr("pointer-events", "none")
+          .text("🌐");
+
+        icon.transition().duration(300).delay(i * 100 + 280).attr("opacity", 1);
+
+        // ラベル
+        const shortLabel = article.title.length > 13 ? article.title.slice(0, 13) + "…" : article.title;
+        const labelR = ORBIT + 20;
+        const lx = cx + Math.cos(angle) * labelR;
+        const ly = cy + Math.sin(angle) * labelR;
+        const anchor = Math.cos(angle) > 0.25 ? "start" : Math.cos(angle) < -0.25 ? "end" : "middle";
+
+        sg.append("text")
+          .attr("x", lx).attr("y", ly)
+          .attr("text-anchor", anchor).attr("dominant-baseline", "middle")
+          .attr("font-size", "9px").attr("font-weight", "700")
+          .attr("fill", cluster.color).attr("opacity", 0)
+          .attr("pointer-events", "none")
+          .style("font-family", "'Helvetica Neue', Arial, sans-serif")
+          .text(shortLabel)
+          .transition().duration(300).delay(i * 100 + 320).attr("opacity", 0.8);
+
+        // ふわふわアニメーション
+        const FLOAT_AMP = 4;
+        const FLOAT_DUR = 2800 + i * 400;
+        function floatCycle(dir: 1 | -1) {
+          dot.transition().duration(FLOAT_DUR / 2).ease(d3.easeSinInOut)
+            .attr("cy", ny + dir * FLOAT_AMP)
+            .on("end", () => floatCycle(-dir as 1 | -1));
+          icon.transition().duration(FLOAT_DUR / 2).ease(d3.easeSinInOut)
+            .attr("y", ny + 1 + dir * FLOAT_AMP);
+        }
+        setTimeout(() => floatCycle(-1), i * 100 + 400 + i * 500);
+
+        // ホバー & クリック
+        sg.on("mouseover", (event) => {
+            dot.interrupt().attr("r", 16).attr("opacity", 0.25).attr("stroke-width", 2.5);
+            const rect = containerRef.current!.getBoundingClientRect();
+            setTooltip({
+              x: event.clientX - rect.left,
+              y: event.clientY - rect.top,
+              text: article.title,
+              subText: `${cluster.label} ▸ クリックで開く`,
+              color: cluster.color,
+            });
+          })
+          .on("mouseout", () => {
+            dot.attr("r", 13).attr("opacity", 0.15).attr("stroke-width", 1.5);
+            setTooltip(null);
+          })
+          .on("click", (event: MouseEvent) => {
+            const rect = containerRef.current!.getBoundingClientRect();
+            onNewsClickRef.current?.(article, event.clientX - rect.left, event.clientY - rect.top);
+          });
+      });
+    });
+
+  }, [clusterNewsMap, ideas, clusters]);
 
   return (
     <div ref={containerRef} className="relative w-full h-full">
