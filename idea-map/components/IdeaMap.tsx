@@ -20,25 +20,25 @@ interface Cluster {
   color: string;
 }
 
-export interface NewsOverlay {
-  ideaId: string;
-  queries: string[];
+export interface NewsArticle {
+  title: string;
+  url: string;
 }
 
 interface IdeaMapProps {
   ideas: PositionedIdea[];
   clusters: Cluster[];
-  newsOverlay?: NewsOverlay | null;
+  /** ideaId → その点に紐づく衛星ニュース */
+  ideaNewsMap?: Record<string, NewsArticle[]>;
   onIdeaClick?: (idea: PositionedIdea, cluster: Cluster | null) => void;
 }
 
-export default function IdeaMap({ ideas, clusters, newsOverlay, onIdeaClick }: IdeaMapProps) {
+export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, onIdeaClick }: IdeaMapProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const onIdeaClickRef = useRef(onIdeaClick);
   onIdeaClickRef.current = onIdeaClick;
 
-  // スケールと zoom group を他の effect から参照できるよう保存
   const scalesRef = useRef<{
     xScale: d3.ScaleLinear<number, number>;
     yScale: d3.ScaleLinear<number, number>;
@@ -68,7 +68,6 @@ export default function IdeaMap({ ideas, clusters, newsOverlay, onIdeaClick }: I
 
     scalesRef.current = { xScale, yScale };
 
-    // blur filter for soft blobs
     const defs = svg.append("defs");
     clusters.forEach((_, i) => {
       const filter = defs.append("filter")
@@ -80,9 +79,9 @@ export default function IdeaMap({ ideas, clusters, newsOverlay, onIdeaClick }: I
         .attr("stdDeviation", 28);
     });
 
-    // zoom
     const g = svg.append("g");
     gRef.current = g;
+
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.25, 10])
       .on("zoom", (ev) => { g.attr("transform", ev.transform); setTooltip(null); });
@@ -119,7 +118,7 @@ export default function IdeaMap({ ideas, clusters, newsOverlay, onIdeaClick }: I
       const dot = g.append("circle")
         .attr("cx", cx).attr("cy", cy).attr("r", 0)
         .attr("fill", color).attr("stroke", "white").attr("stroke-width", 1.5)
-        .attr("class", `idea-dot idea-dot-${idea.id}`)
+        .attr("data-idea-id", idea.id)
         .style("cursor", "pointer")
         .style("filter", "drop-shadow(0 1px 3px rgba(0,0,0,0.18))");
 
@@ -129,7 +128,7 @@ export default function IdeaMap({ ideas, clusters, newsOverlay, onIdeaClick }: I
         .on("mouseover", function (event) {
           d3.select(this).raise().attr("r", 8).attr("stroke-width", 2);
           const rect = containerRef.current!.getBoundingClientRect();
-          setTooltip({ x: event.clientX - rect.left, y: event.clientY - rect.top, text: idea.text, subText: cluster?.label, color: color });
+          setTooltip({ x: event.clientX - rect.left, y: event.clientY - rect.top, text: idea.text, subText: cluster?.label, color });
         })
         .on("mouseout", function () {
           d3.select(this).attr("r", 5).attr("stroke-width", 1.5);
@@ -152,8 +151,8 @@ export default function IdeaMap({ ideas, clusters, newsOverlay, onIdeaClick }: I
       const cx = d3.mean(pts, p => p[0]) ?? 0;
       const cy = d3.mean(pts, p => p[1]) ?? 0;
       const lg = g.append("g").attr("opacity", 0).attr("pointer-events", "none");
-      const approxW = cluster.label.length * 8 + 20;
-      lg.append("rect").attr("x", cx - approxW/2).attr("y", cy - 13).attr("width", approxW).attr("height", 22).attr("rx", 11).attr("fill", "white").attr("opacity", 0.85);
+      const w = cluster.label.length * 8 + 20;
+      lg.append("rect").attr("x", cx - w/2).attr("y", cy - 13).attr("width", w).attr("height", 22).attr("rx", 11).attr("fill", "white").attr("opacity", 0.85);
       lg.append("text").attr("x", cx).attr("y", cy + 1).attr("text-anchor", "middle").attr("dominant-baseline", "middle").attr("fill", cluster.color).attr("font-size", "12px").attr("font-weight", "800").style("font-family", "'Helvetica Neue', Arial, sans-serif").text(cluster.label);
       lg.transition().duration(600).delay(ci * 200 + 800).attr("opacity", 1);
       ci++;
@@ -161,115 +160,127 @@ export default function IdeaMap({ ideas, clusters, newsOverlay, onIdeaClick }: I
 
   }, [ideas, clusters]);
 
-  // ── ニュースオーバーレイ描画 ─────────────────────────────
+  // ── 衛星ニュースドット描画（永続・アニメーション付き）──
   useEffect(() => {
     const g = gRef.current;
     const scales = scalesRef.current;
-    if (!g) return;
+    if (!g || !scales) return;
 
-    // 既存のニュースドットをすべて削除
-    g.selectAll(".news-overlay").remove();
+    // 既存の衛星をすべて削除して再描画
+    g.selectAll(".news-satellite-root").remove();
 
-    if (!newsOverlay || !scales) return;
+    Object.entries(ideaNewsMap).forEach(([ideaId, articles]) => {
+      if (!articles?.length) return;
 
-    const idea = ideas.find(i => i.id === newsOverlay.ideaId);
-    if (!idea) return;
+      const idea = ideas.find(i => i.id === ideaId);
+      if (!idea) return;
 
-    const cluster = clusters.find(c => c.id === idea.clusterId);
-    const color = cluster?.color ?? "#7c3aed";
-    const cx = scales.xScale(idea.x);
-    const cy = scales.yScale(idea.y);
-    const ORBIT = 85;
+      const cluster = clusters.find(c => c.id === idea.clusterId);
+      const color = cluster?.color ?? "#7c3aed";
+      const cx = scales.xScale(idea.x);
+      const cy = scales.yScale(idea.y);
+      const ORBIT = 72;
 
-    // 選択中の親ドットに選択リングを追加
-    g.append("circle")
-      .attr("class", "news-overlay")
-      .attr("cx", cx).attr("cy", cy).attr("r", 0)
-      .attr("fill", "none")
-      .attr("stroke", color).attr("stroke-width", 2.5)
-      .attr("stroke-dasharray", "4 3")
-      .attr("opacity", 0.7)
-      .attr("pointer-events", "none")
-      .transition().duration(300).attr("r", 10);
+      articles.forEach((article, i) => {
+        const angle = (i / articles.length) * 2 * Math.PI - Math.PI / 2;
+        const nx = cx + Math.cos(angle) * ORBIT;
+        const ny = cy + Math.sin(angle) * ORBIT;
 
-    newsOverlay.queries.forEach((query, i) => {
-      const angle = (i / newsOverlay.queries.length) * 2 * Math.PI - Math.PI / 2;
-      const nx = cx + Math.cos(angle) * ORBIT;
-      const ny = cy + Math.sin(angle) * ORBIT;
+        const sg = g.append("g")
+          .attr("class", "news-satellite-root")
+          .attr("transform", `translate(0,0)`)
+          .style("cursor", "pointer");
 
-      const group = g.append("g")
-        .attr("class", "news-overlay")
-        .style("cursor", "pointer");
+        // 接続線（細くて薄い）
+        sg.append("line")
+          .attr("x1", cx).attr("y1", cy)
+          .attr("x2", nx).attr("y2", ny)
+          .attr("stroke", color).attr("stroke-width", 0.8)
+          .attr("stroke-dasharray", "3 4")
+          .attr("opacity", 0).attr("pointer-events", "none")
+          .transition().duration(500).delay(i * 80).attr("opacity", 0.35);
 
-      // 接続線
-      group.append("line")
-        .attr("x1", cx).attr("y1", cy).attr("x2", cx).attr("y2", cy)
-        .attr("stroke", color).attr("stroke-width", 1)
-        .attr("stroke-dasharray", "4 3").attr("opacity", 0.45)
-        .transition().duration(350).delay(i * 60)
-        .attr("x2", nx).attr("y2", ny);
+        // 衛星ドット（白丸＋色枠）
+        const dot = sg.append("circle")
+          .attr("cx", nx).attr("cy", ny).attr("r", 0)
+          .attr("fill", "white")
+          .attr("stroke", color).attr("stroke-width", 1.8)
+          .attr("opacity", 0.9);
 
-      // ニュースドット本体
-      group.append("circle")
-        .attr("cx", nx).attr("cy", ny).attr("r", 0)
-        .attr("fill", "white")
-        .attr("stroke", color).attr("stroke-width", 2)
-        .attr("opacity", 0.95)
-        .transition().duration(300).delay(i * 60 + 100).attr("r", 11);
+        dot.transition().duration(400).delay(i * 80 + 100).attr("r", 10);
 
-      // 📰 アイコン
-      group.append("text")
-        .attr("x", nx).attr("y", ny + 1)
-        .attr("text-anchor", "middle").attr("dominant-baseline", "middle")
-        .attr("font-size", "11px").attr("opacity", 0)
-        .text("📰")
-        .transition().duration(200).delay(i * 60 + 200).attr("opacity", 1);
+        // 📰 アイコン
+        const icon = sg.append("text")
+          .attr("x", nx).attr("y", ny + 1)
+          .attr("text-anchor", "middle").attr("dominant-baseline", "middle")
+          .attr("font-size", "10px").attr("opacity", 0)
+          .attr("pointer-events", "none")
+          .text("📰");
 
-      // ラベル（ドットの外側、短く切り詰め）
-      const shortLabel = query.length > 10 ? query.slice(0, 10) + "…" : query;
-      const labelOffset = 20;
-      const lx = cx + Math.cos(angle) * (ORBIT + labelOffset);
-      const ly = cy + Math.sin(angle) * (ORBIT + labelOffset);
-      const anchor = Math.cos(angle) > 0.3 ? "start" : Math.cos(angle) < -0.3 ? "end" : "middle";
+        icon.transition().duration(300).delay(i * 80 + 250).attr("opacity", 1);
 
-      group.append("text")
-        .attr("x", lx).attr("y", ly)
-        .attr("text-anchor", anchor)
-        .attr("dominant-baseline", "middle")
-        .attr("font-size", "10px")
-        .attr("font-weight", "700")
-        .attr("fill", color)
-        .attr("opacity", 0)
-        .style("font-family", "'Helvetica Neue', Arial, sans-serif")
-        .text(shortLabel)
-        .transition().duration(300).delay(i * 60 + 250).attr("opacity", 0.9);
+        // ラベル（ドットの外側）
+        const shortLabel = article.title.length > 9 ? article.title.slice(0, 9) + "…" : article.title;
+        const labelR = ORBIT + 18;
+        const lx = cx + Math.cos(angle) * labelR;
+        const ly = cy + Math.sin(angle) * labelR;
+        const anchor = Math.cos(angle) > 0.25 ? "start" : Math.cos(angle) < -0.25 ? "end" : "middle";
 
-      // ホバー時にフルテキストのツールチップ
-      group
-        .on("mouseover", (event) => {
-          group.select("circle").attr("stroke-width", 3).attr("r", 13);
-          const rect = containerRef.current!.getBoundingClientRect();
-          setTooltip({
-            x: event.clientX - rect.left,
-            y: event.clientY - rect.top,
-            text: query,
-            subText: "クリックでニュース検索",
-            color,
+        const label = sg.append("text")
+          .attr("x", lx).attr("y", ly)
+          .attr("text-anchor", anchor)
+          .attr("dominant-baseline", "middle")
+          .attr("font-size", "9.5px").attr("font-weight", "700")
+          .attr("fill", color).attr("opacity", 0)
+          .attr("pointer-events", "none")
+          .style("font-family", "'Helvetica Neue', Arial, sans-serif")
+          .text(shortLabel);
+
+        label.transition().duration(300).delay(i * 80 + 300).attr("opacity", 0.85);
+
+        // ── ふわふわアニメーション（D3 繰り返しtransition）──
+        const FLOAT_AMP = 3.5;
+        const FLOAT_DUR = 2200 + i * 350;
+        const PHASE_DELAY = i * 450;
+
+        function floatCycle(direction: 1 | -1) {
+          dot.transition()
+            .duration(FLOAT_DUR / 2)
+            .ease(d3.easeSinInOut)
+            .attr("cy", ny + direction * FLOAT_AMP)
+            .on("end", () => floatCycle(-direction as 1 | -1));
+          icon.transition()
+            .duration(FLOAT_DUR / 2)
+            .ease(d3.easeSinInOut)
+            .attr("y", ny + 1 + direction * FLOAT_AMP);
+        }
+
+        setTimeout(() => floatCycle(-1), i * 80 + 350 + PHASE_DELAY);
+
+        // ホバー & クリック
+        sg.on("mouseover", (event) => {
+            dot.interrupt().attr("stroke-width", 2.8).attr("r", 13);
+            const rect = containerRef.current!.getBoundingClientRect();
+            setTooltip({
+              x: event.clientX - rect.left,
+              y: event.clientY - rect.top,
+              text: article.title,
+              subText: "クリックでニュース検索 →",
+              color,
+            });
+          })
+          .on("mouseout", () => {
+            dot.attr("stroke-width", 1.8).attr("r", 10);
+            setTooltip(null);
+          })
+          .on("click", () => {
+            window.open(article.url, "_blank");
           });
-        })
-        .on("mouseout", () => {
-          group.select("circle").attr("stroke-width", 2).attr("r", 11);
-          setTooltip(null);
-        })
-        .on("click", () => {
-          window.open(
-            `https://news.google.com/search?q=${encodeURIComponent(query)}&hl=ja&gl=JP`,
-            "_blank"
-          );
-        });
+      });
     });
 
-  }, [newsOverlay, ideas, clusters]);
+  // ideaNewsMapが変わったとき（保存時）に再描画。ideas/clustersが変わったときも再描画。
+  }, [ideaNewsMap, ideas, clusters]);
 
   return (
     <div ref={containerRef} className="relative w-full h-full">

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, KeyboardEvent, ChangeEvent } from "react";
 import dynamic from "next/dynamic";
-import type { NewsOverlay } from "@/components/IdeaMap";
+import type { NewsArticle } from "@/components/IdeaMap";
 
 const IdeaMap = dynamic(() => import("@/components/IdeaMap"), { ssr: false });
 
@@ -12,6 +12,7 @@ interface Idea {
   url?: string;
   memo?: string;
   image?: string;
+  news?: NewsArticle[]; // 保存済み衛星ニュース
 }
 
 interface PositionedIdea extends Idea {
@@ -52,7 +53,6 @@ export default function Home() {
   const [confirmClear, setConfirmClear] = useState(false);
   const [editingClusterId, setEditingClusterId] = useState<string | null>(null);
   const [editingClusterLabel, setEditingClusterLabel] = useState("");
-  const [newsOverlay, setNewsOverlay] = useState<NewsOverlay | null>(null);
   const [isMobile, setIsMobile] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -61,25 +61,6 @@ export default function Home() {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) setIdeas(JSON.parse(saved));
   }, []);
-
-  // detailIdea が開かれたらニュースを取得してマップ上にオーバーレイ
-  useEffect(() => {
-    if (!detailIdea?.cluster) { setNewsOverlay(null); return; }
-    const { idea, cluster } = detailIdea;
-    const clusterIdeas = mapData?.ideas.filter(i => i.clusterId === idea.clusterId).map(i => i.text) ?? [];
-    fetch("/api/news", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ label: cluster.label, summary: cluster.summary, ideas: clusterIdeas }),
-    })
-      .then(r => r.json())
-      .then(data => {
-        if (data.queries) setNewsOverlay({ ideaId: idea.id, queries: data.queries });
-      })
-      .catch(() => {});
-    return () => setNewsOverlay(null);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detailIdea?.idea.id]);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -201,6 +182,14 @@ export default function Home() {
     setMapData(prev => prev ? {
       ...prev,
       ideas: prev.ideas.map(i => i.id === id ? { ...i, memo, image } : i),
+    } : null);
+  }
+
+  function saveNews(id: string, articles: NewsArticle[]) {
+    setIdeas(prev => prev.map(i => i.id === id ? { ...i, news: articles } : i));
+    setMapData(prev => prev ? {
+      ...prev,
+      ideas: prev.ideas.map(i => i.id === id ? { ...i, news: articles } : i),
     } : null);
   }
 
@@ -493,7 +482,9 @@ export default function Home() {
           <IdeaMap
             ideas={mapData.ideas}
             clusters={mapData.clusters}
-            newsOverlay={newsOverlay}
+            ideaNewsMap={Object.fromEntries(
+              ideas.filter(i => i.news?.length).map(i => [i.id, i.news!])
+            )}
             onIdeaClick={(idea, cluster) => setDetailIdea({ idea, cluster })}
           />
         ) : (
@@ -540,9 +531,11 @@ export default function Home() {
           <DetailPanel
             idea={detailIdea.idea}
             cluster={detailIdea.cluster}
+            clusterIdeas={mapData?.ideas.filter(i => i.clusterId === detailIdea.idea.clusterId).map(i => i.text) ?? []}
             isMobile={isMobile}
             onClose={() => setDetailIdea(null)}
             onSave={(id, memo, image) => { saveDetail(id, memo, image); setDetailIdea(null); }}
+            onSaveNews={saveNews}
           />
         )}
       </main>
@@ -634,20 +627,45 @@ function LinkCard({ data }: { data: OgpData }) {
 function DetailPanel({
   idea,
   cluster,
+  clusterIdeas,
   isMobile,
   onClose,
   onSave,
+  onSaveNews,
 }: {
   idea: PositionedIdea;
   cluster: Cluster | null;
+  clusterIdeas: string[];
   isMobile: boolean;
   onClose: () => void;
   onSave: (id: string, memo: string, image?: string) => void;
+  onSaveNews: (id: string, articles: NewsArticle[]) => void;
 }) {
   const [memo, setMemo] = useState(idea.memo ?? "");
   const [image, setImage] = useState<string | undefined>(idea.image);
+  const [newsFetching, setNewsFetching] = useState(false);
+  const [savedNews, setSavedNews] = useState<NewsArticle[]>(idea.news ?? []);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const linkPreviews = useLinkPreviews(memo);
+
+  async function fetchAndSaveNews() {
+    if (!cluster) return;
+    setNewsFetching(true);
+    try {
+      const res = await fetch("/api/news", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label: cluster.label, summary: cluster.summary, ideas: clusterIdeas }),
+      });
+      const data = await res.json();
+      if (data.articles) {
+        setSavedNews(data.articles);
+        onSaveNews(idea.id, data.articles);
+      }
+    } catch { /* ignore */ } finally {
+      setNewsFetching(false);
+    }
+  }
 
   function handleImageUpload(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -701,11 +719,39 @@ function DetailPanel({
       {/* 本文 */}
       <div className="flex flex-col gap-3 p-4 flex-1 overflow-y-auto">
 
-        {/* ニュースはマップ上に点で表示中 */}
+        {/* 関連ニュース */}
         {cluster && (
-          <div className="rounded-xl px-3 py-2 text-xs font-semibold flex items-center gap-2" style={{ background: cluster.color + "10", color: cluster.color, border: `1.5px solid ${cluster.color}25` }}>
-            <span>📰</span>
-            <span>マップ上に関連ニュースを表示中</span>
+          <div>
+            <label className="text-xs font-bold uppercase tracking-widest" style={{ color: "var(--accent)" }}>
+              📰 関連ニュース
+            </label>
+            {savedNews.length > 0 ? (
+              <div className="mt-2 flex flex-col gap-1.5">
+                <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  マップ上に衛星として表示中 ✦ クリックで検索
+                </p>
+                {savedNews.map((a, i) => (
+                  <a key={i} href={a.url} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-semibold hover:opacity-75 transition-opacity"
+                    style={{ background: cluster.color + "12", color: cluster.color, border: `1.5px solid ${cluster.color}30`, textDecoration: "none" }}
+                  >
+                    <span>📰</span><span>{a.title}</span>
+                  </a>
+                ))}
+                <button onClick={fetchAndSaveNews} disabled={newsFetching} className="text-xs mt-1 rounded-lg px-3 py-1.5 font-semibold" style={{ background: "#f0ecff", color: "var(--text-muted)", border: "1.5px solid var(--border)" }}>
+                  {newsFetching ? "⏳ 更新中…" : "🔄 再検索して更新"}
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={fetchAndSaveNews}
+                disabled={newsFetching}
+                className="w-full mt-2 rounded-xl py-3 text-sm font-bold transition-all"
+                style={{ background: newsFetching ? "#e4e0f5" : cluster.color + "15", color: cluster.color, border: `2px solid ${cluster.color}40` }}
+              >
+                {newsFetching ? "⏳ ニュースを検索中…" : "📰 関連ニュースを検索して保存"}
+              </button>
+            )}
           </div>
         )}
 
