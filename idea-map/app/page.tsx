@@ -655,7 +655,7 @@ function DetailPanel({
       const res = await fetch("/api/news", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ label: cluster.label, summary: cluster.summary, ideas: clusterIdeas }),
+        body: JSON.stringify({ label: cluster.label, summary: cluster.summary, ideas: clusterIdeas, memo: memo.trim() }),
       });
       const data = await res.json();
       if (data.articles) {

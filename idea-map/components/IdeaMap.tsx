@@ -180,10 +180,19 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, onIdeaClick
       const color = cluster?.color ?? "#7c3aed";
       const cx = scales.xScale(idea.x);
       const cy = scales.yScale(idea.y);
-      const ORBIT = 72;
+      // 6件以下は1リング、7件以上は内外2リングに分ける
+      const INNER = 72;
+      const OUTER = 115;
+      const innerCount = articles.length <= 6 ? articles.length : Math.ceil(articles.length / 2);
 
       articles.forEach((article, i) => {
-        const angle = (i / articles.length) * 2 * Math.PI - Math.PI / 2;
+        const isOuter = i >= innerCount;
+        const ringCount = isOuter ? articles.length - innerCount : innerCount;
+        const ringIndex = isOuter ? i - innerCount : i;
+        const ORBIT = isOuter ? OUTER : INNER;
+        const angle = (ringIndex / ringCount) * 2 * Math.PI
+          - Math.PI / 2
+          + (isOuter ? Math.PI / ringCount : 0); // 外リングをずらして重ならないように
         const nx = cx + Math.cos(angle) * ORBIT;
         const ny = cy + Math.sin(angle) * ORBIT;
 
@@ -222,7 +231,7 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, onIdeaClick
 
         // ラベル（ドットの外側）
         const shortLabel = article.title.length > 13 ? article.title.slice(0, 13) + "…" : article.title;
-        const labelR = ORBIT + 18;
+        const labelR = ORBIT + (isOuter ? 16 : 18);
         const lx = cx + Math.cos(angle) * labelR;
         const ly = cy + Math.sin(angle) * labelR;
         const anchor = Math.cos(angle) > 0.25 ? "start" : Math.cos(angle) < -0.25 ? "end" : "middle";
