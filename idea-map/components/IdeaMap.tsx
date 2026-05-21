@@ -24,6 +24,8 @@ export interface NewsArticle {
   title: string;
   url: string;
   source?: string;
+  /** 衛星の配置角度 0〜360°。似た記事は近い角度、異なる記事は遠い角度 */
+  angle?: number;
 }
 
 interface IdeaMapProps {
@@ -195,9 +197,12 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
         const ringCount = isOuter ? articles.length - innerCount : innerCount;
         const ringIndex = isOuter ? i - innerCount : i;
         const ORBIT = isOuter ? OUTER : INNER;
-        const angle = (ringIndex / ringCount) * 2 * Math.PI
-          - Math.PI / 2
-          + (isOuter ? Math.PI / ringCount : 0); // 外リングをずらして重ならないように
+        // Claudeが角度を割り当てた場合はそれを使う。なければ等間隔フォールバック
+        const angle = article.angle != null
+          ? (article.angle * Math.PI / 180)  // 度 → ラジアン
+          : (ringIndex / ringCount) * 2 * Math.PI
+              - Math.PI / 2
+              + (isOuter ? Math.PI / ringCount : 0);
         const nx = cx + Math.cos(angle) * ORBIT;
         const ny = cy + Math.sin(angle) * ORBIT;
 
@@ -322,7 +327,10 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
       const ORBIT = maxDist + 85; // クラスターブロブの外側
 
       articles.slice(0, 5).forEach((article, i) => {
-        const angle = (i / Math.min(articles.length, 5)) * 2 * Math.PI - Math.PI / 2;
+        // Claudeが角度を割り当てた場合はそれを使う。なければ等間隔フォールバック
+        const angle = article.angle != null
+          ? (article.angle * Math.PI / 180)  // 度 → ラジアン
+          : (i / Math.min(articles.length, 5)) * 2 * Math.PI - Math.PI / 2;
         const nx = cx + Math.cos(angle) * ORBIT;
         const ny = cy + Math.sin(angle) * ORBIT;
 

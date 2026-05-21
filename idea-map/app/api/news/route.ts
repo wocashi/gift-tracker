@@ -7,6 +7,8 @@ export interface NewsArticle {
   title: string;
   url: string;
   source?: string;
+  /** 衛星の配置角度 0〜360°。似た記事は近い角度、異なる記事は遠い角度 */
+  angle?: number;
 }
 
 export async function POST(request: NextRequest) {
@@ -40,7 +42,13 @@ ${context}
 
 ニュース記事・公式サイト・企業HP・Note記事・ブログ・Wikipedia など幅広いタイプを含め、5件見つけてください。
 見つかったサイトを以下のJSON形式のみで返してください（前置き・説明不要）:
-{"articles": [{"title": "ページタイトル", "url": "https://...", "source": "サイト名"}, ...]}`,
+{"articles": [{"title": "ページタイトル", "url": "https://...", "source": "サイト名", "angle": 45}, ...]}
+
+角度(angle)の割り当てルール:
+- 各記事に 0〜360 の角度を割り当てる
+- 内容・テーマが似ている記事同士は近い角度（差が30度以内）にする
+- 内容・テーマが異なる記事は遠い角度（差が60度以上）にする
+- 記事全体が円周上に意味的に配置されるよう、まずテーマでグループ化してから各グループに角度帯を割り振ること`,
       }],
     });
 
