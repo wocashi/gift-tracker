@@ -16,87 +16,86 @@ export interface NewsArticle {
 export async function POST(request: NextRequest) {
   const { label, summary, ideas, memo } = await request.json();
 
-  // 検索コンテキストを組み立て（メモがあれば優先的に使う）
-  const context = [
-    memo ? `メモ内容: ${memo}` : null,
-    summary ? `クラスター概要: ${summary}` : null,
-    ideas?.length ? `関連アイデア: ${(ideas as string[]).slice(0, 5).join("、")}` : null,
-  ].filter(Boolean).join("\n");
-
-  const searchInstruction = memo
-    ? `以下のメモ内容に関連するウェブサイト・記事を検索して10件見つけてください。\nメモ: ${memo}`
-    : `「${label}」に関連するウェブサイト・記事を検索して10件見つけてください。`;
+  // 検索クエリを組み立て
+  const query = memo?.trim()
+    ? memo.trim().slice(0, 200)
+    : [label, summary, ...((ideas as string[]) ?? []).slice(0, 2)]
+        .filter(Boolean).join(" ").slice(0, 200);
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const response = await (client.messages.create as any)({
-      model: "claude-sonnet-4-6",
-      max_tokens: 800,
-      tools: [{
-        type: "web_search_20250305",
-        name: "web_search",
-        max_uses: 1,
-      }],
+    // ① Tavily で記事を検索（無料・多様なソース・Google以外も含む）
+    const tavilyRes = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        api_key: process.env.TAVILY_API_KEY,
+        query,
+        search_depth: "basic",
+        max_results: 5,
+        include_answer: false,
+        include_raw_content: false,
+        exclude_domains: ["google.com", "google.co.jp"],
+      }),
+    });
+
+    if (!tavilyRes.ok) throw new Error(`Tavily error: ${tavilyRes.status}`);
+
+    const tavilyData = await tavilyRes.json();
+    const rawArticles = ((tavilyData.results ?? []) as {
+      title?: string; url: string; content?: string; score?: number;
+    }[]).slice(0, 5).map(r => ({
+      title: r.title ?? r.url,
+      url: r.url,
+      source: (() => { try { return new URL(r.url).hostname.replace("www.", ""); } catch { return undefined; } })(),
+      tavilyScore: r.score ?? 0.5,
+      snippet: (r.content ?? "").slice(0, 80),
+    }));
+
+    if (rawArticles.length === 0) throw new Error("検索結果が0件でした");
+
+    // ② Claude Haiku で angle + relevance だけ割り当て（最小トークン）
+    const articleList = rawArticles
+      .map((a, i) => `${i + 1}. ${a.title}${a.snippet ? ` — ${a.snippet}` : ""}`)
+      .join("\n");
+
+    const haikuRes = await client.messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 250,
       messages: [{
         role: "user",
-        content: `${searchInstruction}
-${context}
+        content: `トピック「${label}」の記事5件にangle(0〜360)とrelevance(0.0〜1.0)を割り当てて。
 
-ニュース記事・公式サイト・企業HP・Note記事・ブログ・Wikipedia など幅広いタイプを含め、5件見つけてください。
-見つかったサイトを以下のJSON形式のみで返してください（前置き・説明不要）:
-{"articles": [{"title": "ページタイトル", "url": "https://...", "source": "サイト名", "angle": 45, "relevance": 0.85}, ...]}
+${articleList}
 
-角度(angle)の割り当てルール:
-- 各記事に 0〜360 の角度を割り当てる
-- 内容・テーマが似ている記事同士は近い角度（差が30度以内）にする
-- 内容・テーマが異なる記事は遠い角度（差が60度以上）にする
-- 記事全体が円周上に意味的に配置されるよう、まずテーマでグループ化してから各グループに角度帯を割り振ること
+ルール:
+- 内容が似た記事→angleを近く(差30°以内)、異なる記事→遠く(差60°以上)
+- relevance: 核心=0.9〜1.0 直接関連=0.6〜0.8 間接=0.3〜0.5
 
-関連度(relevance)の割り当てルール:
-- 0.9〜1.0: そのトピックの中核・定義を扱う記事（中心に近い軌道）
-- 0.6〜0.8: 直接関連する内容の記事
-- 0.3〜0.5: 間接的・応用的に関連する記事
-- 0.0〜0.2: 周辺的・補足的な記事（外側の軌道）`,
+JSON配列のみ返答:
+[{"i":0,"angle":45,"relevance":0.85},...]`,
       }],
     });
 
-    // テキスト応答からJSON抽出
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const textBlock = response.content.find((b: any) => b.type === "text");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const text: string = (textBlock as any)?.text ?? "";
+    const haikuText = haikuRes.content[0].type === "text" ? haikuRes.content[0].text : "";
+    const jsonMatch = haikuText.match(/\[[\s\S]*\]/);
 
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const angleMap: Record<number, { angle: number; relevance: number }> = {};
     if (jsonMatch) {
-      const { articles } = JSON.parse(jsonMatch[0]);
-      return NextResponse.json({ articles: (articles as NewsArticle[]).slice(0, 5) });
+      try {
+        const parsed: { i: number; angle: number; relevance: number }[] = JSON.parse(jsonMatch[0]);
+        parsed.forEach(item => { angleMap[item.i] = { angle: item.angle, relevance: item.relevance }; });
+      } catch { /* フォールバックに任せる */ }
     }
 
-    // フォールバック: tool_result ブロックからURL直接抽出
-    const articles: NewsArticle[] = [];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for (const block of response.content as any[]) {
-      if (block.type === "web_search_tool_result") {
-        for (const item of block.content ?? []) {
-          if (item.type === "document" && item.document?.url) {
-            articles.push({
-              title: item.document.title ?? item.document.url,
-              url: item.document.url,
-              source: (() => {
-                try { return new URL(item.document.url).hostname.replace("www.", ""); }
-                catch { return undefined; }
-              })(),
-            });
-          }
-        }
-      }
-    }
+    const articles: NewsArticle[] = rawArticles.map((a, i) => ({
+      title: a.title,
+      url: a.url,
+      source: a.source,
+      angle: angleMap[i]?.angle ?? (i / rawArticles.length) * 360,
+      relevance: angleMap[i]?.relevance ?? a.tavilyScore,
+    }));
 
-    if (articles.length > 0) {
-      return NextResponse.json({ articles: articles.slice(0, 5) });
-    }
-
-    throw new Error("検索結果を取得できませんでした");
+    return NextResponse.json({ articles });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
