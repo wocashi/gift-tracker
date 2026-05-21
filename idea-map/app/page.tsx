@@ -340,14 +340,29 @@ export default function Home() {
                 <span className="flex-shrink-0 rounded-full text-xs font-bold flex items-center justify-center mt-0.5" style={{ width: 18, height: 18, background: "#ede9fe", color: "var(--accent)", fontSize: 10 }}>
                   {i + 1}
                 </span>
-                <span className="flex-1 text-sm leading-snug" style={{ color: "var(--text)" }}>
-                  {idea.text}
-                  {idea.memo && <span className="ml-1 text-xs" style={{ color: "var(--text-muted)" }}>📝</span>}
-                  {idea.image && <span className="ml-1 text-xs">🖼️</span>}
-                </span>
-                {idea.url && (
-                  <a href={idea.url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="flex-shrink-0 opacity-40 hover:opacity-100 transition-opacity text-sm" title={idea.url}>🔗</a>
-                )}
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm leading-snug" style={{ color: "var(--text)" }}>
+                    {idea.text}
+                    {idea.memo && <span className="ml-1 text-xs" style={{ color: "var(--text-muted)" }}>📝</span>}
+                    {idea.image && <span className="ml-1 text-xs">🖼️</span>}
+                  </span>
+                  {idea.url && (
+                    <a
+                      href={idea.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={e => e.stopPropagation()}
+                      className="flex items-center gap-1 mt-1 w-fit rounded-md px-2 py-0.5 text-xs font-medium transition-all hover:opacity-80"
+                      style={{ background: "#ede9fe", color: "var(--accent)", textDecoration: "none", maxWidth: "100%" }}
+                      title={idea.url}
+                    >
+                      <span>🔗</span>
+                      <span className="truncate" style={{ maxWidth: 160 }}>
+                        {(() => { try { return new URL(idea.url).hostname.replace("www.", ""); } catch { return idea.url; } })()}
+                      </span>
+                    </a>
+                  )}
+                </div>
                 <button onClick={() => removeIdea(idea.id)} className="opacity-0 group-hover:opacity-100 transition-opacity text-xs flex-shrink-0 mt-0.5" style={{ color: "var(--text-muted)" }}>✕</button>
               </div>
             ))}
