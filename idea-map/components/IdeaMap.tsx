@@ -58,6 +58,63 @@ function getRelevance(article: NewsArticle): number {
   return article.relevance ?? urlHashFraction(article.url ?? article.title ?? "");
 }
 
+interface SatNode extends d3.SimulationNodeDatum {
+  targetRadius: number;
+  baseAngle: number;
+  rel: number;
+}
+
+/**
+ * D3 フォースシミュレーションで衛星の最終 2D 座標を計算する。
+ * - 似た角度（< 50°差）の記事同士はリンク力で引き合う → 物理的に近くなる
+ * - 全記事は電荷力で互いに反発 → 重なりを防ぐ
+ * - ラジアル力がそれぞれの relevance 半径に戻す → 関連度の距離感を維持
+ */
+function runSatForce(
+  articles: NewsArticle[],
+  cx: number, cy: number,
+  getRadius: (a: NewsArticle, i: number) => number,
+  getAngle:  (a: NewsArticle, i: number) => number,
+): Array<{ x: number; y: number; rel: number; angle: number }> {
+  const nodes: SatNode[] = articles.map((article, i) => {
+    const r = getRadius(article, i);
+    const a = getAngle(article, i);
+    return { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r,
+             targetRadius: r, baseAngle: a, rel: getRelevance(article) };
+  });
+
+  // 角度差 < 50° の記事ペアにリンクを張る（類似 = 引き合う）
+  const THRESHOLD = 50 * (Math.PI / 180);
+  const links: Array<{ source: number; target: number; sim: number }> = [];
+  for (let a = 0; a < nodes.length; a++) {
+    for (let b = a + 1; b < nodes.length; b++) {
+      let diff = Math.abs(nodes[a].baseAngle - nodes[b].baseAngle);
+      diff = Math.min(diff, 2 * Math.PI - diff);
+      if (diff < THRESHOLD) {
+        links.push({ source: a, target: b, sim: 1 - diff / THRESHOLD });
+      }
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sim = d3.forceSimulation<SatNode>(nodes)
+    .force("link",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (d3.forceLink(links) as any)
+        .distance((l: { sim: number }) => 22 + (1 - l.sim) * 85) // 類似→22px近く・非類似→最大107px
+        .strength((l: { sim: number }) => l.sim * 0.9)
+    )
+    .force("charge", d3.forceManyBody<SatNode>().strength(-40)) // 反発で重なり防止
+    .force("radial",
+      d3.forceRadial<SatNode>(d => d.targetRadius, cx, cy).strength(0.55) // 元の半径に戻す
+    )
+    .stop();
+
+  sim.tick(150); // 同期実行
+
+  return nodes.map(n => ({ x: n.x!, y: n.y!, rel: n.rel, angle: n.baseAngle }));
+}
+
 export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNewsMap = {}, onIdeaClick, onNewsClick }: IdeaMapProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -221,23 +278,30 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
       const OUTER = 115;
       const innerCount = articles.length <= 6 ? articles.length : Math.ceil(articles.length / 2);
 
-      articles.forEach((article, i) => {
+      // フォースシミュレーション用の半径・角度計算関数
+      const getRadius = (article: NewsArticle, i: number) => {
+        const baseOrbit = i >= innerCount ? OUTER : INNER;
+        const rel = getRelevance(article);
+        return baseOrbit * (0.45 + (1 - rel) * 1.1);
+      };
+      const getAngle = (_article: NewsArticle, i: number) => {
         const isOuter = i >= innerCount;
         const ringCount = isOuter ? articles.length - innerCount : innerCount;
         const ringIndex = isOuter ? i - innerCount : i;
-        const baseOrbit = isOuter ? OUTER : INNER;
-        // relevance で軌道半径を伸縮（関連度高=近い、低=遠い）
-        // rel=1.0 → 0.45× (近い)、rel=0.0 → 1.55× (遠い)
-        const rel = getRelevance(article);
-        const ORBIT = baseOrbit * (0.45 + (1 - rel) * 1.1);
-        // Claudeが角度を割り当てた場合はそれを使う。なければ等間隔フォールバック
-        const angle = article.angle != null
-          ? (article.angle * Math.PI / 180)  // 度 → ラジアン
-          : (ringIndex / ringCount) * 2 * Math.PI
-              - Math.PI / 2
+        return _article.angle != null
+          ? _article.angle * Math.PI / 180
+          : (ringIndex / ringCount) * 2 * Math.PI - Math.PI / 2
               + (isOuter ? Math.PI / ringCount : 0);
-        const nx = cx + Math.cos(angle) * ORBIT;
-        const ny = cy + Math.sin(angle) * ORBIT;
+      };
+
+      // フォースで最終位置を計算（類似記事は引き合い、異なる記事は反発）
+      const positions = runSatForce(articles, cx, cy, getRadius, getAngle);
+
+      articles.forEach((article, i) => {
+        const { x: nx, y: ny, rel } = positions[i];
+        // ラベルの向きは最終位置→中心の方向から算出
+        const labelAngle = Math.atan2(ny - cy, nx - cx);
+        const distFromCenter = Math.sqrt((nx - cx) ** 2 + (ny - cy) ** 2);
 
         const sg = g.append("g")
           .attr("class", "news-satellite-root")
@@ -273,12 +337,11 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
 
         icon.transition().duration(300).delay(i * 80 + 250).attr("opacity", 1);
 
-        // ラベル（ドットの外側）
+        // ラベル（ドットの外側・最終位置の方向に配置）
         const shortLabel = article.title.length > 13 ? article.title.slice(0, 13) + "…" : article.title;
-        const labelR = ORBIT + 17;
-        const lx = cx + Math.cos(angle) * labelR;
-        const ly = cy + Math.sin(angle) * labelR;
-        const anchor = Math.cos(angle) > 0.25 ? "start" : Math.cos(angle) < -0.25 ? "end" : "middle";
+        const lx = cx + Math.cos(labelAngle) * (distFromCenter + 17);
+        const ly = cy + Math.sin(labelAngle) * (distFromCenter + 17);
+        const anchor = Math.cos(labelAngle) > 0.25 ? "start" : Math.cos(labelAngle) < -0.25 ? "end" : "middle";
 
         const label = sg.append("text")
           .attr("x", lx).attr("y", ly)
@@ -363,18 +426,24 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
       const maxDist = Math.max(...pts.map(p => Math.sqrt((p[0]-cx)**2 + (p[1]-cy)**2)), 40);
       const baseOrbit = maxDist + 85; // クラスターブロブの外側
 
-      articles.slice(0, 5).forEach((article, i) => {
-        // relevance で軌道半径を伸縮（関連度高=近い、低=遠い）
-        // rel=1.0 → 0.55× (近い)、rel=0.0 → 1.45× (遠い)
-        const rel = getRelevance(article);
-        const ORBIT = baseOrbit * (0.55 + (1 - rel) * 0.9);
+      const clusterArticles = articles.slice(0, 5);
 
-        // Claudeが角度を割り当てた場合はそれを使う。なければ等間隔フォールバック
-        const angle = article.angle != null
-          ? (article.angle * Math.PI / 180)  // 度 → ラジアン
-          : (i / Math.min(articles.length, 5)) * 2 * Math.PI - Math.PI / 2;
-        const nx = cx + Math.cos(angle) * ORBIT;
-        const ny = cy + Math.sin(angle) * ORBIT;
+      // フォースシミュレーションで最終位置を計算
+      const clusterPositions = runSatForce(
+        clusterArticles, cx, cy,
+        (article) => {
+          const rel = getRelevance(article);
+          return baseOrbit * (0.55 + (1 - rel) * 0.9);
+        },
+        (article, i) => article.angle != null
+          ? article.angle * Math.PI / 180
+          : (i / clusterArticles.length) * 2 * Math.PI - Math.PI / 2,
+      );
+
+      clusterArticles.forEach((article, i) => {
+        const { x: nx, y: ny, rel } = clusterPositions[i];
+        const labelAngle = Math.atan2(ny - cy, nx - cx);
+        const distFromCenter = Math.sqrt((nx - cx) ** 2 + (ny - cy) ** 2);
 
         // 位置を収集（後でクラスター間接続線に使う）
         allClusterSats.push({ clusterId, color: cluster.color, nx, ny });
@@ -413,12 +482,11 @@ export default function IdeaMap({ ideas, clusters, ideaNewsMap = {}, clusterNews
 
         icon.transition().duration(300).delay(i * 100 + 280).attr("opacity", 1);
 
-        // ラベル
+        // ラベル（最終位置の方向に配置）
         const shortLabel = article.title.length > 13 ? article.title.slice(0, 13) + "…" : article.title;
-        const labelR = ORBIT + 20;
-        const lx = cx + Math.cos(angle) * labelR;
-        const ly = cy + Math.sin(angle) * labelR;
-        const anchor = Math.cos(angle) > 0.25 ? "start" : Math.cos(angle) < -0.25 ? "end" : "middle";
+        const lx = cx + Math.cos(labelAngle) * (distFromCenter + 20);
+        const ly = cy + Math.sin(labelAngle) * (distFromCenter + 20);
+        const anchor = Math.cos(labelAngle) > 0.25 ? "start" : Math.cos(labelAngle) < -0.25 ? "end" : "middle";
 
         sg.append("text")
           .attr("x", lx).attr("y", ly)
